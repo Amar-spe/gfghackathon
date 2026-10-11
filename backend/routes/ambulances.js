@@ -7,7 +7,8 @@ const AMBULANCE_SPECS = [
   { type: 'Advanced Life Support', equipmentType: 'ALS' },
   { type: 'Mobile ICU', equipmentType: 'ICU' },
   { type: 'Cardiac Support', equipmentType: 'Cardiac' },
-  { type: 'Trauma Support', equipmentType: 'Trauma' }
+  { type: 'Trauma Support', equipmentType: 'Trauma' },
+  { type: 'Advanced Life Support', equipmentType: 'ALS' }
 ];
 
 const AMBULANCE_NAMES = ['AMB-001', 'AMB-002', 'AMB-003', 'AMB-004', 'AMB-005', 'AMB-006'];
@@ -23,16 +24,20 @@ function generateNearby(lat, lng, radiusKm) {
   };
 }
 
-// GET /api/ambulances?lat=12.97&lng=77.59&emergencyType=Accident
+// GET /api/ambulances?lat=12.97&lng=77.59&emergencyType=Accident&emergencyMode=false
 router.get('/', (req, res) => {
   const { lat, lng, emergencyType = 'Accident', emergencyMode = 'false' } = req.query;
 
   if (!lat || !lng) {
-    return res.status(400).json({ error: 'lat and lng are required' });
+    return res.status(400).json({ error: 'lat and lng are required query parameters' });
   }
 
   const centerLat = parseFloat(lat);
   const centerLng = parseFloat(lng);
+
+  if (isNaN(centerLat) || isNaN(centerLng)) {
+    return res.status(400).json({ error: 'lat and lng must be valid numbers' });
+  }
 
   const trafficConditions = {};
   const trafficLevels = ['LOW', 'MEDIUM', 'HIGH'];
@@ -74,22 +79,32 @@ router.get('/', (req, res) => {
     return ambulance;
   });
 
-  // Score all ambulances
+  // Score all ambulances considering emergency type and traffic
   const emergencyLoc = { lat: centerLat, lng: centerLng };
   const isEmergencyMode = emergencyMode === 'true';
 
   const scoredAmbulances = ambulances.map(amb => {
-    const scoring = scoreAmbulance(amb, emergencyLoc, trafficConditions, isEmergencyMode);
+    const scoring = scoreAmbulance(amb, emergencyLoc, trafficConditions, isEmergencyMode, emergencyType);
     return { ...amb, ...scoring };
-  }).sort((a, b) => b.score - a.score);
+  }).sort((a, b) => {
+    // Available units ALWAYS rank ahead of non-available units
+    const aAvail = a.status === 'available';
+    const bAvail = b.status === 'available';
+    if (aAvail && !bAvail) return -1;
+    if (!aAvail && bAvail) return 1;
+    return b.score - a.score;
+  });
+
+  // Never designate a busy or maintenance unit as bestAmbulanceId
+  const bestAvailable = scoredAmbulances.find(a => a.status === 'available') || null;
 
   res.json({
     ambulances: scoredAmbulances,
     trafficConditions,
-    bestAmbulanceId: scoredAmbulances[0].id,
+    bestAmbulanceId: bestAvailable ? bestAvailable.id : null,
+    emergencyType,
     generatedAt: new Date().toISOString()
   });
 });
 
 module.exports = router;
-

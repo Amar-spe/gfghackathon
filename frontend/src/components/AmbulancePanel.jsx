@@ -72,8 +72,8 @@ function AmbulanceCard({ ambulance, selected, onSelect, rank, trafficConditions 
         position: 'relative',
       }}
     >
-      {/* AI Best badge */}
-      {rank === 1 && (
+      {/* AI Best badge — Only on available units */}
+      {rank === 1 && ambulance.status === 'available' && (
         <div style={{
           position: 'absolute', top: -1, right: 8,
           background: 'linear-gradient(90deg, #00ff88, #00d4ff)',

@@ -12,7 +12,7 @@ import SOSOverlay from './components/SOSOverlay';
 import DispatchTimeline from './components/DispatchTimeline';
 import CitizenDashboard from './components/citizen/CitizenDashboard';
 
-import { scoreAmbulance, scoreHospital } from './utils/aiEngine';
+import { scoreAmbulance, scoreHospital, getTrafficMultiplier } from './utils/aiEngine';
 import {
   generateRoadAmbulances,
   generateDualRoutes, rerouteFromPosition,
@@ -120,13 +120,31 @@ export default function App() {
   }, []);
 
   // ── Rank helpers ──────────────────────────────────────────────────
-  const rankAmbulances = useCallback((ambs, loc, traffic, eMode) => {
-    return [...ambs].map(a => ({
-      ...a,
-      score:            scoreAmbulance(a, loc, traffic, eMode),
-      distance:         parseFloat(calculateDistance(a.lat, a.lng, loc.lat, loc.lng).toFixed(2)),
-      estimatedArrival: parseFloat(((calculateDistance(a.lat, a.lng, loc.lat, loc.lng) / 40) * 60).toFixed(1)),
-    })).sort((a, b) => b.score - a.score);
+  const rankAmbulances = useCallback((ambs, loc, traffic, eMode, eType = 'General') => {
+    return [...ambs].map(a => {
+      const scoring = scoreAmbulance(a, loc, traffic, eMode, eType);
+      const scoreVal = typeof scoring === 'number' ? scoring : (scoring?.score ?? 0);
+      const trafficLevel = traffic[`amb_${a.id}`] || 'LOW';
+      const mult = getTrafficMultiplier(trafficLevel, eMode);
+      const dist = calculateDistance(a.lat, a.lng, loc.lat, loc.lng);
+      const effectiveDist = dist * mult;
+      const eta = (effectiveDist / 40) * 60;
+      return {
+        ...a,
+        ...(typeof scoring === 'object' ? scoring : {}),
+        score: scoreVal,
+        distance: parseFloat(dist.toFixed(2)),
+        estimatedArrival: parseFloat(eta.toFixed(1)),
+        isAvailable: a.status === 'available',
+      };
+    }).sort((a, b) => {
+      // Available units ALWAYS rank ahead of non-available units
+      const aAvail = a.status === 'available';
+      const bAvail = b.status === 'available';
+      if (aAvail && !bAvail) return -1;
+      if (!aAvail && bAvail) return 1;
+      return b.score - a.score;
+    });
   }, []);
 
   const rankHospitals = useCallback((hospList, loc, eType, traffic, eMode) => {
@@ -192,9 +210,10 @@ export default function App() {
     setTrafficConditions(traffic);
 
     // AI scoring
-    const scored = rankAmbulances(newAmbs, loc, traffic, emergencyMode);
+    const scored = rankAmbulances(newAmbs, loc, traffic, emergencyMode, emergencyType);
     setAmbulances(scored);
-    setSelectedAmbulance(scored[0]);
+    const bestAvail = scored.find(a => a.status === 'available') || scored[0];
+    setSelectedAmbulance(bestAvail);
 
     // Mark timeline step 2: Ambulance Assigned
     const assignTime = new Date().toLocaleTimeString('en-IN');
@@ -206,12 +225,12 @@ export default function App() {
     setRankedHospitals(rankedH.slice(0, 3));
     setSelectedHospital(rankedH[0]);
 
-    const preEta = scored[0].estimatedArrival + (rankedH[0].estimatedTime || 5);
+    const preEta = (bestAvail?.estimatedArrival || 5) + (rankedH[0]?.estimatedTime || 5);
     setEta(preEta);
 
     addAlert('🆘 Emergency location set! AI analyzing situation...', 'danger');
-    setTimeout(() => addAlert(`🚑 AI selected: ${scored[0].name} (Score: ${scored[0].score.toFixed(0)})`, 'success'), 700);
-    setTimeout(() => addAlert(`🏥 Recommended: ${rankedH[0].name} — ${rankedH[0].type}`, 'info'), 1400);
+    setTimeout(() => addAlert(`🚑 AI selected: ${bestAvail.name} (Score: ${bestAvail.score.toFixed(0)})`, 'success'), 700);
+    setTimeout(() => addAlert(`🏥 Recommended: ${rankedH[0]?.name || 'Hospital'} — ${rankedH[0]?.type || 'Medical Facility'}`, 'info'), 1400);
   }, [phase, emergencyMode, emergencyType, rankAmbulances, rankHospitals, addAlert]);
 
 
@@ -534,7 +553,7 @@ export default function App() {
       }
       const newAmbs   = await generateRoadAmbulances(loc.lat, loc.lng, 6, hospitals);
       const traffic   = generateTrafficConditions(newAmbs, hospitals, undefined, realTraffic);
-      const scoredAmbs  = rankAmbulances(newAmbs, loc, traffic, eMode);
+      const scoredAmbs  = rankAmbulances(newAmbs, loc, traffic, eMode, eType);
       const scoredHosps = rankHospitals(hospitals, loc, eType, traffic, eMode);
 
       // Store pending dispatch args and show overlay
@@ -552,6 +571,8 @@ export default function App() {
     const { loc, eType, eMode, hospitals, newAmbs, traffic, scoredAmbs, scoredHosps } = p;
     sosPendingRef.current = null;
 
+    const bestAvail = scoredAmbs.find(a => a.status === 'available') || scoredAmbs[0];
+
     setEmergencyLocation(loc);
     setPhase('located');
     setEmergencyType(eType);
@@ -563,12 +584,12 @@ export default function App() {
     setLocalHospitals(hospitals);
     setTrafficConditions(traffic);
     setAmbulances(scoredAmbs);
-    setSelectedAmbulance(scoredAmbs[0]);
+    setSelectedAmbulance(bestAvail);
     setRankedHospitals(scoredHosps.slice(0, 3));
     setSelectedHospital(scoredHosps[0]);
 
     addAlert('🚨 SOS confirmed — dispatching emergency services!', 'danger');
-    executeDispatch(loc, scoredAmbs[0], scoredHosps[0], traffic, eMode, eType, 0, 'optimal');
+    executeDispatch(loc, bestAvail, scoredHosps[0], traffic, eMode, eType, 0, 'optimal');
   }, [executeDispatch, addAlert]);
 
   const handleSOSCancel = useCallback(() => {
@@ -595,7 +616,10 @@ export default function App() {
       const newH = rankHospitals(localHospitals, emergencyLocation, emergencyType, trafficConditions, val);
       setRankedHospitals(newH.slice(0, 3));
       setSelectedHospital(h => newH.find(n => n.id === h?.id) || newH[0]);
-      setAmbulances(rankAmbulances(ambulances, emergencyLocation, trafficConditions, val));
+      const newA = rankAmbulances(ambulances, emergencyLocation, trafficConditions, val, emergencyType);
+      setAmbulances(newA);
+      const bestAvail = newA.find(a => a.status === 'available') || newA[0];
+      setSelectedAmbulance(bestAvail);
     }
   }, [emergencyLocation, phase, emergencyType, trafficConditions, ambulances, localHospitals, rankHospitals, rankAmbulances, addAlert]);
 
@@ -643,9 +667,16 @@ export default function App() {
       const newH = rankHospitals(localHospitals, emergencyLocation, type, trafficConditions, emergencyMode);
       setRankedHospitals(newH.slice(0, 3));
       setSelectedHospital(newH[0]);
-      addAlert(`🔄 Emergency type changed to ${type} — hospitals re-ranked`, 'info');
+
+      // Re-rank ambulances when emergency category changes (Requirement 7)
+      const newA = rankAmbulances(ambulances, emergencyLocation, trafficConditions, emergencyMode, type);
+      setAmbulances(newA);
+      const bestAvail = newA.find(a => a.status === 'available') || newA[0];
+      setSelectedAmbulance(bestAvail);
+
+      addAlert(`🔄 Emergency type changed to ${type} — units & hospitals re-ranked`, 'info');
     }
-  }, [emergencyLocation, phase, trafficConditions, emergencyMode, localHospitals, rankHospitals, addAlert]);
+  }, [emergencyLocation, phase, trafficConditions, emergencyMode, localHospitals, ambulances, rankHospitals, rankAmbulances, addAlert]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────
   useEffect(() => () => {
