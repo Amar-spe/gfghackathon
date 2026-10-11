@@ -11,33 +11,106 @@ import React, { useState } from 'react';
 import { useCitizenRescue, REGISTERED_CITIZENS } from '../../context/CitizenRescueContext';
 
 export default function CitizenAuthGate() {
-  const { loginCitizen, registerCitizen } = useCitizenRescue();
+  const { loginCitizen, registerCitizen, authConfigured } = useCitizenRescue();
   const [authMode, setAuthMode] = useState('demo'); // 'demo' | 'login' | 'register'
 
   // Custom login state
   const [loginInput, setLoginInput] = useState('');
-  
+  const [loginPassword, setLoginPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+
   // Register state
   const [regName, setRegName] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regZone, setRegZone] = useState('Koramangala, Bengaluru');
   const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
 
-  const handleCustomLogin = (e) => {
-    e.preventDefault();
-    if (!loginInput.trim()) return;
-    loginCitizen(loginInput.trim());
+  const switchMode = (mode) => {
+    setAuthMode(mode);
+    setFormError('');
   };
 
-  const handleRegister = (e) => {
+  // Is this one of the built-in demo profiles (Citizen ID / email / name)?
+  const isDemoIdentifier = (value) => {
+    const v = value.trim().toLowerCase();
+    return REGISTERED_CITIZENS.some(
+      (c) => c.citizenId.toLowerCase() === v || c.email.toLowerCase() === v || c.fullName.toLowerCase() === v
+    );
+  };
+
+  const handleCustomLogin = async (e) => {
     e.preventDefault();
+    setFormError('');
+    const identifier = loginInput.trim();
+    if (!identifier) return;
+
+    // Demo profile typed by hand, no password needed
+    if (!loginPassword && isDemoIdentifier(identifier)) {
+      loginCitizen(identifier);
+      return;
+    }
+
+    if (!authConfigured) {
+      setFormError('Supabase is not configured. Use a demo profile, or add the Supabase keys to frontend/.env.');
+      return;
+    }
+    if (!identifier.includes('@')) {
+      setFormError('Enter the email address you registered with.');
+      return;
+    }
+    if (!loginPassword) {
+      setFormError('Please enter your password.');
+      return;
+    }
+
+    setSubmitting(true);
+    const result = await loginCitizen(identifier, loginPassword);
+    setSubmitting(false);
+    if (result && !result.success) {
+      setFormError(result.error || 'Sign-in failed.');
+    } else {
+      setLoginPassword('');
+    }
+  };
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setFormError('');
     if (!regName.trim()) return;
-    registerCitizen({
+
+    if (authConfigured) {
+      if (!regEmail.trim()) {
+        setFormError('Email is required to create an account.');
+        return;
+      }
+      if (regPassword.length < 6) {
+        setFormError('Password must be at least 6 characters.');
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    const result = await registerCitizen({
       fullName: regName.trim(),
       phone: regPhone.trim(),
       communityZone: regZone,
-      email: regEmail.trim()
+      email: regEmail.trim(),
+      password: authConfigured ? regPassword : undefined
     });
+    setSubmitting(false);
+
+    if (result && result.success === false) {
+      setFormError(result.error || 'Registration failed.');
+      return;
+    }
+    setRegPassword('');
+    if (result && result.needsConfirmation) {
+      // Email confirmation is enabled in Supabase: send the user to sign-in
+      setLoginInput(regEmail.trim());
+      switchMode('login');
+    }
   };
 
   return (
@@ -59,7 +132,7 @@ export default function CitizenAuthGate() {
         {/* Auth Mode Tabs */}
         <div className="inline-flex p-1 mt-6 rounded-xl bg-brand-surface border border-brand-border/80">
           <button
-            onClick={() => setAuthMode('demo')}
+            onClick={() => switchMode('demo')}
             className={`px-4 py-2 rounded-lg text-xs font-display font-bold transition-all ${
               authMode === 'demo'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
@@ -69,7 +142,7 @@ export default function CitizenAuthGate() {
             ⚡ 1-Click Demo Profiles
           </button>
           <button
-            onClick={() => setAuthMode('login')}
+            onClick={() => switchMode('login')}
             className={`px-4 py-2 rounded-lg text-xs font-display font-bold transition-all ${
               authMode === 'login'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
@@ -79,7 +152,7 @@ export default function CitizenAuthGate() {
             🔑 Citizen Sign-In
           </button>
           <button
-            onClick={() => setAuthMode('register')}
+            onClick={() => switchMode('register')}
             className={`px-4 py-2 rounded-lg text-xs font-display font-bold transition-all ${
               authMode === 'register'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
@@ -146,40 +219,51 @@ export default function CitizenAuthGate() {
             <span>🔑</span> Citizen Identity Sign-In
           </h3>
           <p className="text-xs text-brand-muted">
-            Enter your Citizen ID (e.g. <code className="text-cyan-300">CIT-8492</code>) or registered email address.
+            Sign in with your registered <strong className="text-cyan-300">email and password</strong>.
+            Demo profiles can also be opened with their Citizen ID (e.g. <code className="text-cyan-300">CIT-8492</code>) and no password.
           </p>
 
           <form onSubmit={handleCustomLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-mono text-gray-300 mb-1">
-                Citizen ID / Email:
+                Email / Citizen ID:
               </label>
               <input
                 type="text"
                 required
                 value={loginInput}
                 onChange={(e) => setLoginInput(e.target.value)}
-                placeholder="e.g. CIT-8492 or aarav@lifeline.org"
+                placeholder="you@example.com (or demo: CIT-8492)"
                 className="w-full p-3 rounded-xl bg-brand-surface border border-brand-border text-xs font-mono text-gray-100 placeholder-brand-muted focus:outline-none focus:border-cyan-400"
               />
             </div>
 
             <div>
               <label className="block text-xs font-mono text-gray-300 mb-1">
-                Security PIN / Password:
+                Password:
               </label>
               <input
                 type="password"
-                defaultValue="••••••••"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Your account password"
                 className="w-full p-3 rounded-xl bg-brand-surface border border-brand-border text-xs font-mono text-gray-100 focus:outline-none focus:border-cyan-400"
               />
             </div>
 
+            {formError && (
+              <div role="alert" className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-xs font-mono text-red-300">
+                {formError}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full py-3 rounded-xl text-xs font-display font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-lg shadow-cyan-600/30"
+              disabled={submitting}
+              className="w-full py-3 rounded-xl text-xs font-display font-bold bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 disabled:cursor-not-allowed text-white transition-all shadow-lg shadow-cyan-600/30"
             >
-              Unlock Personal Rescue Telemetry
+              {submitting ? 'Signing in…' : 'Unlock Personal Rescue Telemetry'}
             </button>
           </form>
         </div>
@@ -209,6 +293,37 @@ export default function CitizenAuthGate() {
             </div>
 
             <div>
+              <label className="block text-xs font-mono text-gray-300 mb-1">
+                Email{authConfigured ? '' : ' (optional)'}:
+              </label>
+              <input
+                type="email"
+                required={authConfigured}
+                value={regEmail}
+                onChange={(e) => setRegEmail(e.target.value)}
+                autoComplete="email"
+                placeholder="you@example.com"
+                className="w-full p-2.5 rounded-xl bg-brand-surface border border-brand-border text-xs font-mono text-gray-100 placeholder-brand-muted focus:outline-none focus:border-cyan-400"
+              />
+            </div>
+
+            {authConfigured && (
+              <div>
+                <label className="block text-xs font-mono text-gray-300 mb-1">Password (min 6 characters):</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  autoComplete="new-password"
+                  placeholder="Create a password"
+                  className="w-full p-2.5 rounded-xl bg-brand-surface border border-brand-border text-xs font-mono text-gray-100 placeholder-brand-muted focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+            )}
+
+            <div>
               <label className="block text-xs font-mono text-gray-300 mb-1">Phone Number (For verification):</label>
               <input
                 type="tel"
@@ -235,11 +350,18 @@ export default function CitizenAuthGate() {
               </select>
             </div>
 
+            {formError && (
+              <div role="alert" className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-xs font-mono text-red-300">
+                {formError}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full py-3 rounded-xl text-xs font-display font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-lg shadow-emerald-600/30"
+              disabled={submitting}
+              className="w-full py-3 rounded-xl text-xs font-display font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white transition-all shadow-lg shadow-emerald-600/30"
             >
-              Create Account & Enter Grid
+              {submitting ? 'Creating account…' : 'Create Account & Enter Grid'}
             </button>
           </form>
         </div>
@@ -247,4 +369,3 @@ export default function CitizenAuthGate() {
     </div>
   );
 }
-

@@ -25,7 +25,8 @@
  * ============================================================================
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { supabase, authHeaders, isSupabaseConfigured } from '../../lib/supabase';
 
 const CitizenRescueContext = createContext();
 
@@ -444,6 +445,75 @@ const DEFAULT_ORG_AGGREGATES = [
   { org: 'Bangalore Civil Defense Volunteers', members: 50, verifiedPoints: 1290, verifiedTasks: 88, badge: 'Urban Shield' }
 ];
 
+// ── Supabase row -> UI shape mappers ────────────────────────────────
+const slugHandle = (name = '') =>
+  '@' + (name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'citizen');
+
+const mapProfileRow = (row, reports = []) => {
+  const now = Date.now();
+  const hourly = reports.filter(r => now - new Date(r.reported_at).getTime() < 60 * 60 * 1000).length;
+  const daily = reports.filter(r => now - new Date(r.reported_at).getTime() < 24 * 60 * 60 * 1000).length;
+  return {
+    isDemo: false,
+    dbId: row.id,
+    citizenId: row.citizen_id,
+    email: row.email || '',
+    fullName: row.full_name,
+    handle: slugHandle(row.full_name),
+    phone: row.phone || '',
+    communityZone: row.community_zone || '',
+    organization: row.organization || 'Civic First Responder Volunteer',
+    joinedDate: (row.joined_at || '').slice(0, 10),
+    totalPoints: row.total_points ?? 0,
+    verifiedContributions: row.verified_contributions ?? 0,
+    accountStatus: row.account_status || 'Good Standing',
+    restrictionFlag: row.restriction_flag || null,
+    hourlyReportsSubmitted: hourly,
+    dailyReportsSubmitted: daily,
+    avatar: '👤',
+    cooldownUntil: row.cooldown_until || null
+  };
+};
+
+const mapReportRow = (r, user, config) => ({
+  reportId: r.report_id,
+  citizenId: user?.citizenId,
+  citizenName: user?.fullName,
+  actionKey: r.action_key,
+  actionLabel: config?.rules?.[r.action_key]?.label || 'Emergency Report',
+  emergencyType: r.emergency_type || 'Emergency',
+  location: r.location || '',
+  reportedAt: r.reported_at,
+  patientIntakeStatus: 'In Transit / ER Queue',
+  ambulanceAssigned: 'Pending assignment',
+  receivingHospital: r.receiving_hospital || 'Hospital ER',
+  details: r.details || `Citizen reported ${r.emergency_type} at ${r.location}.`,
+  duplicateScore: 'Pending check',
+  status: r.status,
+  source: 'supabase'
+});
+
+const auditStatusFor = (a) =>
+  a.action_key === 'FRAUDULENT_REPORT' ? 'FRAUDULENT_FLAGGED'
+    : a.action_key === 'DUPLICATE_UNVERIFIED_REPORT' ? 'DUPLICATE_UNVERIFIED'
+      : 'VERIFIED_VALID';
+
+const mapAuditRow = (a, user, config) => ({
+  id: `AUD-${a.id}`,
+  reportId: a.report_id || '—',
+  citizenId: user?.citizenId,
+  citizenName: user?.fullName,
+  actionTaken: config?.rules?.[a.action_key]?.label || a.action_key,
+  category: config?.rules?.[a.action_key]?.category || 'Assistance',
+  actionKey: a.action_key,
+  pointsAwarded: a.points_awarded ?? 0,
+  verificationStatus: auditStatusFor(a),
+  verifiedBy: 'Hospital Triage',
+  hospital: '—',
+  timestamp: a.created_at,
+  notes: a.note || ''
+});
+
 export function CitizenRescueProvider({ children }) {
   // ── Dynamic Configuration (NO HARDCODING) ─────────────────────────
   const [config, setConfig] = useState(DEFAULT_BASELINE_CONFIG);
@@ -452,8 +522,11 @@ export function CitizenRescueProvider({ children }) {
   // Initially null (logged out), so user's personal details are hidden until login.
   const [currentUser, setCurrentUser] = useState(() => {
     try {
+      // Only demo profiles are restored from localStorage.
+      // Real accounts are restored from the Supabase session instead.
       const saved = localStorage.getItem('lifeline_citizen_user');
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return parsed && parsed.isDemo !== false ? parsed : null;
     } catch (_) {
       return null;
     }
@@ -468,8 +541,17 @@ export function CitizenRescueProvider({ children }) {
   const [areaAggregates, setAreaAggregates] = useState(DEFAULT_AREA_AGGREGATES);
   const [orgAggregates, setOrgAggregates] = useState(DEFAULT_ORG_AGGREGATES);
 
+  // Raw rows for real (Supabase) accounts
+  const [realReportRows, setRealReportRows] = useState([]);
+  const [realAuditRows, setRealAuditRows] = useState([]);
+  const [realLeaderboardRows, setRealLeaderboardRows] = useState([]);
+
   const [loading, setLoading] = useState(false);
   const [lastNotification, setLastNotification] = useState(null);
+
+  // Always-fresh config for callbacks that must not re-run when config changes
+  const configRef = useRef(config);
+  configRef.current = config;
 
   // ── Fetch dynamic point configuration from backend ────────────────
   const fetchConfig = useCallback(async () => {
@@ -489,74 +571,6 @@ export function CitizenRescueProvider({ children }) {
   useEffect(() => {
     fetchConfig();
   }, [fetchConfig]);
-
-  // ── LOGIN CITIZEN ─────────────────────────────────────────────────
-  const loginCitizen = useCallback((identifier) => {
-    // identifier can be citizenId, email, or name
-    const found = citizenDirectory.find(
-      c => c.citizenId === identifier || c.email?.toLowerCase() === identifier.toLowerCase() || c.fullName.toLowerCase() === identifier.toLowerCase()
-    );
-
-    if (found) {
-      setCurrentUser(found);
-      localStorage.setItem('lifeline_citizen_user', JSON.stringify(found));
-      setLastNotification({
-        type: 'success',
-        message: `Welcome back, ${found.fullName}! Personal Rescue Telemetry & Points unlocked.`
-      });
-      return { success: true, user: found };
-    }
-
-    setLastNotification({
-      type: 'danger',
-      message: 'Citizen profile not found. Please select a valid profile or register.'
-    });
-    return { success: false, error: 'User not found' };
-  }, [citizenDirectory]);
-
-  // ── LOGOUT CITIZEN ────────────────────────────────────────────────
-  const logoutCitizen = useCallback(() => {
-    setCurrentUser(null);
-    localStorage.removeItem('lifeline_citizen_user');
-    setLastNotification({
-      type: 'info',
-      message: 'Logged out. Personal details and point history are now protected.'
-    });
-  }, []);
-
-  // ── REGISTER NEW CITIZEN ──────────────────────────────────────────
-  const registerCitizen = useCallback(({ fullName, phone, communityZone, email }) => {
-    const newCitizenId = `CIT-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newCitizen = {
-      citizenId: newCitizenId,
-      email: email || `${fullName.toLowerCase().replace(/\s+/g, '.')}@lifeline.org`,
-      fullName,
-      handle: `@${fullName.toLowerCase().replace(/\s+/g, '_')}`,
-      phone: phone || '+91 98000 00000',
-      communityZone: communityZone || 'Central Bengaluru',
-      organization: 'Civic First Responder Volunteer',
-      joinedDate: new Date().toISOString().split('T')[0],
-      totalPoints: 0,
-      verifiedContributions: 0,
-      accountStatus: 'Good Standing',
-      restrictionFlag: null,
-      hourlyReportsSubmitted: 0,
-      dailyReportsSubmitted: 0,
-      avatar: '👤',
-      cooldownUntil: null
-    };
-
-    setCitizenDirectory(prev => [newCitizen, ...prev]);
-    setCurrentUser(newCitizen);
-    localStorage.setItem('lifeline_citizen_user', JSON.stringify(newCitizen));
-
-    setLastNotification({
-      type: 'success',
-      message: `Account created for ${fullName} (${newCitizenId})! Ready to earn Rescue Impact Points upon hospital verification.`
-    });
-
-    return newCitizen;
-  }, []);
 
   // ── RE-EVALUATE BADGES FOR CURRENT USER ───────────────────────────
   const recomputeBadges = useCallback((verifiedCount, userHistory) => {
@@ -598,11 +612,272 @@ export function CitizenRescueProvider({ children }) {
     return rule ? rule.points : 0;
   }, [config]);
 
+  // ── REAL (SUPABASE) ACCOUNT DATA ──────────────────────────────────
+  // Demo profiles (1-click) stay fully local. Accounts created through
+  // Supabase Auth (isDemo === false) read/write real data in the database.
+  const isRealUser = currentUser?.isDemo === false;
+
+  const callBackend = useCallback(async (path, body) => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(body)
+    });
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok && json.success !== false, json };
+  }, []);
+
+  const loadRealUserData = useCallback(async (authUser) => {
+    if (!supabase || !authUser) return null;
+    try {
+      const meta = authUser.user_metadata || {};
+
+      let { data: row, error } = await supabase
+        .from('citizens').select('*').eq('id', authUser.id).maybeSingle();
+      if (error) throw error;
+
+      // First login after sign-up (e.g. after email confirmation): create the profile row
+      if (!row) {
+        const { data: created, error: insertError } = await supabase
+          .from('citizens')
+          .insert({
+            id: authUser.id,
+            full_name: meta.full_name || authUser.email?.split('@')[0] || 'Citizen',
+            email: authUser.email,
+            phone: meta.phone || null,
+            community_zone: meta.community_zone || null
+          })
+          .select()
+          .single();
+        if (insertError) throw insertError;
+        row = created;
+      }
+
+      const [reportsRes, auditRes, boardRes] = await Promise.all([
+        supabase.from('reports').select('*').eq('citizen_id', authUser.id)
+          .order('reported_at', { ascending: false }).limit(200),
+        supabase.from('audit_log').select('*').eq('citizen_id', authUser.id)
+          .order('created_at', { ascending: false }).limit(200),
+        supabase.from('leaderboard_view').select('*').limit(20)
+      ]);
+      if (reportsRes.error) throw reportsRes.error;
+      if (auditRes.error) throw auditRes.error;
+      if (boardRes.error) console.warn('leaderboard_view not available:', boardRes.error.message);
+
+      const reportRows = reportsRes.data || [];
+      const auditRows = auditRes.data || [];
+      const profile = mapProfileRow(row, reportRows);
+
+      setRealReportRows(reportRows);
+      setRealAuditRows(auditRows);
+      setRealLeaderboardRows(boardRes.data || []);
+      setCurrentUser(profile);
+
+      // Badges are computed from the user's real verified history
+      setBadges(DEFAULT_BADGES.map(b => ({ ...b, currentCount: 0, isUnlocked: false, unlockedAt: null })));
+      recomputeBadges(
+        profile.verifiedContributions,
+        auditRows.map(a => mapAuditRow(a, profile, configRef.current))
+      );
+      return profile;
+    } catch (err) {
+      console.error('Supabase load failed:', err);
+      setLastNotification({ type: 'danger', message: `Could not load your account data: ${err.message}` });
+      return null;
+    }
+  }, [recomputeBadges]);
+
+  const refreshCitizenData = useCallback(async () => {
+    if (!supabase) return null;
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user ? loadRealUserData(data.session.user) : null;
+  }, [loadRealUserData]);
+
+  // Restore an existing Supabase session on page load / handle sign-out
+  useEffect(() => {
+    if (!supabase) return undefined;
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (active && data.session?.user) loadRealUserData(data.session.user);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        setCurrentUser(prev => (prev && prev.isDemo === false ? null : prev));
+      }
+    });
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, [loadRealUserData]);
+
+  // What the UI sees: real data for real accounts, local demo data otherwise
+  const realPending = useMemo(
+    () => (isRealUser
+      ? realReportRows
+          .filter(r => r.status === 'AWAITING_HOSPITAL_VERIFICATION')
+          .map(r => mapReportRow(r, currentUser, config))
+      : []),
+    [isRealUser, realReportRows, currentUser, config]
+  );
+  const realAudit = useMemo(
+    () => (isRealUser ? realAuditRows.map(a => mapAuditRow(a, currentUser, config)) : []),
+    [isRealUser, realAuditRows, currentUser, config]
+  );
+  const realLeaderboard = useMemo(
+    () => realLeaderboardRows.map((r, i) => ({
+      rank: i + 1,
+      userId: r.citizen_id,
+      name: r.full_name,
+      handle: slugHandle(r.full_name),
+      zone: r.community_zone || '—',
+      verifiedPoints: r.total_points,
+      verifiedCount: r.verified_contributions,
+      avatar: '👤',
+      badge: 'Community Member',
+      isCurrentUser: r.citizen_id === currentUser?.citizenId,
+      trend: '—'
+    })),
+    [realLeaderboardRows, currentUser]
+  );
+
+  const effectivePending = isRealUser ? realPending : pendingVerifications;
+  const effectiveAudit = isRealUser ? realAudit : auditHistory;
+  const effectiveLeaderboard = isRealUser ? realLeaderboard : leaderboard;
+
+  // ── LOGIN CITIZEN ─────────────────────────────────────────────────
+  // loginCitizen(email, password)  -> real Supabase account
+  // loginCitizen(citizenId | email | name) -> local demo profile
+  const loginCitizen = useCallback(async (identifier, password) => {
+    if (password && supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: identifier.trim(),
+        password
+      });
+      if (error) {
+        setLastNotification({ type: 'danger', message: `Sign-in failed: ${error.message}` });
+        return { success: false, error: error.message };
+      }
+      const profile = await loadRealUserData(data.user);
+      if (profile) {
+        setLastNotification({
+          type: 'success',
+          message: `Welcome back, ${profile.fullName}! Personal Rescue Telemetry & Points unlocked.`
+        });
+        return { success: true, user: profile };
+      }
+      return { success: false, error: 'Could not load profile' };
+    }
+
+    // identifier can be citizenId, email, or name (demo profiles)
+    const found = citizenDirectory.find(
+      c => c.citizenId === identifier || c.email?.toLowerCase() === identifier.toLowerCase() || c.fullName.toLowerCase() === identifier.toLowerCase()
+    );
+
+    if (found) {
+      setCurrentUser(found);
+      localStorage.setItem('lifeline_citizen_user', JSON.stringify(found));
+      setLastNotification({
+        type: 'success',
+        message: `Welcome back, ${found.fullName}! Personal Rescue Telemetry & Points unlocked.`
+      });
+      return { success: true, user: found };
+    }
+
+    setLastNotification({
+      type: 'danger',
+      message: 'Citizen profile not found. Please select a valid profile or register.'
+    });
+    return { success: false, error: 'User not found' };
+  }, [citizenDirectory, loadRealUserData]);
+
+  // ── LOGOUT CITIZEN ────────────────────────────────────────────────
+  const logoutCitizen = useCallback(async () => {
+    setCurrentUser(null);
+    setRealReportRows([]);
+    setRealAuditRows([]);
+    setRealLeaderboardRows([]);
+    localStorage.removeItem('lifeline_citizen_user');
+    if (supabase) {
+      try { await supabase.auth.signOut(); } catch (_) { /* ignore */ }
+    }
+    setLastNotification({
+      type: 'info',
+      message: 'Logged out. Personal details and point history are now protected.'
+    });
+  }, []);
+
+  // ── REGISTER NEW CITIZEN ──────────────────────────────────────────
+  // With email + password -> real Supabase account. Without -> local demo account.
+  const registerCitizen = useCallback(async ({ fullName, phone, communityZone, email, password }) => {
+    if (supabase && password && email) {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { data: { full_name: fullName, phone, community_zone: communityZone } }
+      });
+      if (error) {
+        setLastNotification({ type: 'danger', message: `Registration failed: ${error.message}` });
+        return { success: false, error: error.message };
+      }
+      if (!data.session) {
+        // Email confirmation is ON in Supabase: profile is created on first login
+        setLastNotification({
+          type: 'info',
+          message: 'Account created. Check your email to confirm it, then sign in.'
+        });
+        return { success: true, needsConfirmation: true };
+      }
+      const profile = await loadRealUserData(data.user);
+      if (profile) {
+        setLastNotification({
+          type: 'success',
+          message: `Account created for ${profile.fullName} (${profile.citizenId})! Ready to earn Rescue Impact Points upon hospital verification.`
+        });
+      }
+      return { success: !!profile, user: profile };
+    }
+
+    const newCitizenId = `CIT-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newCitizen = {
+      citizenId: newCitizenId,
+      email: email || `${fullName.toLowerCase().replace(/\s+/g, '.')}@lifeline.org`,
+      fullName,
+      handle: `@${fullName.toLowerCase().replace(/\s+/g, '_')}`,
+      phone: phone || '+91 98000 00000',
+      communityZone: communityZone || 'Central Bengaluru',
+      organization: 'Civic First Responder Volunteer',
+      joinedDate: new Date().toISOString().split('T')[0],
+      totalPoints: 0,
+      verifiedContributions: 0,
+      accountStatus: 'Good Standing',
+      restrictionFlag: null,
+      hourlyReportsSubmitted: 0,
+      dailyReportsSubmitted: 0,
+      avatar: '👤',
+      cooldownUntil: null
+    };
+
+    setCitizenDirectory(prev => [newCitizen, ...prev]);
+    setCurrentUser(newCitizen);
+    localStorage.setItem('lifeline_citizen_user', JSON.stringify(newCitizen));
+
+    setLastNotification({
+      type: 'success',
+      message: `Account created for ${fullName} (${newCitizenId})! Ready to earn Rescue Impact Points upon hospital verification.`
+    });
+
+    return newCitizen;
+  }, [loadRealUserData]);
+
   // ── CORE HOSPITAL VERIFICATION ACTION ─────────────────────────────
   /**
    * Points must ONLY be awarded to the citizen's account after a "Hospital" user
    * (via Hospital portal/backend) explicitly verifies the patient report is valid
    * upon receiving the patient.
+   *
+   * Real (Supabase) reports are verified by the BACKEND (service key), never by the
+   * browser, so a citizen can't credit points to themselves.
    */
   const verifyReportByHospital = useCallback(async ({
     reportId,
@@ -615,10 +890,30 @@ export function CitizenRescueProvider({ children }) {
     setLoading(true);
 
     // Find the pending report
-    const report = pendingVerifications.find(r => r.reportId === reportId);
+    const report = effectivePending.find(r => r.reportId === reportId);
     if (!report) {
       setLoading(false);
       return { success: false, error: 'Report not found' };
+    }
+
+    // ── Real report: backend verifies and writes points ──
+    if (report.source === 'supabase') {
+      const { ok, json } = await callBackend('/api/citizen/verify-report', {
+        reportId, verificationResult, verifierName, verifierRole, hospitalName, notes
+      });
+      if (!ok) {
+        setLastNotification({ type: 'danger', message: json.error || 'Verification failed on the server.' });
+        setLoading(false);
+        return { success: false, error: json.error || 'Verification failed' };
+      }
+      await refreshCitizenData();
+      const message = json.message || 'Report verification recorded.';
+      setLastNotification({
+        type: verificationResult === 'VERIFY_VALID' ? 'success' : verificationResult === 'FLAG_FRAUDULENT' ? 'danger' : 'warning',
+        message
+      });
+      setLoading(false);
+      return { success: true, pointsAwarded: json.pointsAwarded ?? json.data?.pointsAwarded ?? 0, message };
     }
 
     const now = new Date().toISOString();
@@ -783,7 +1078,7 @@ export function CitizenRescueProvider({ children }) {
     setLoading(false);
 
     return { success: true, pointsAwarded, message: notificationMsg };
-  }, [pendingVerifications, currentUser, auditHistory, config, getDynamicPointsForAction, recomputeBadges]);
+  }, [effectivePending, currentUser, auditHistory, config, getDynamicPointsForAction, recomputeBadges, callBackend, refreshCitizenData]);
 
   // ── SUBMIT CITIZEN REPORT ─────────────────────────────────────────
   const submitCitizenReport = useCallback(async ({
@@ -808,6 +1103,50 @@ export function CitizenRescueProvider({ children }) {
         message: 'Your account is restricted. Submit an appeal to the Hospital Oversight Board before reporting.'
       });
       return { success: false, error: 'Account restricted' };
+    }
+
+    // ── Real account: save to Supabase ──
+    if (isRealUser) {
+      const rules = config.antiAbuseRules;
+      if (currentUser.hourlyReportsSubmitted >= rules.maxReportsPerHour) {
+        setLastNotification({
+          type: 'warning',
+          message: `Rate limit reached. Maximum ${rules.maxReportsPerHour} reports per hour allowed to prevent abuse.`
+        });
+        return { success: false, error: 'Hourly rate limit reached' };
+      }
+      if (currentUser.dailyReportsSubmitted >= rules.dailyLimit) {
+        setLastNotification({
+          type: 'warning',
+          message: `Daily limit of ${rules.dailyLimit} reports reached. Please try again tomorrow.`
+        });
+        return { success: false, error: 'Daily limit reached' };
+      }
+
+      const { data, error } = await supabase
+        .from('reports')
+        .insert({
+          citizen_id: currentUser.dbId,
+          action_key: actionKey,
+          emergency_type: emergencyType,
+          location,
+          details: details || `Citizen reported ${emergencyType} at ${location}.`,
+          receiving_hospital: receivingHospital
+        })
+        .select()
+        .single();
+
+      if (error) {
+        setLastNotification({ type: 'danger', message: `Could not submit report: ${error.message}` });
+        return { success: false, error: error.message };
+      }
+
+      await refreshCitizenData();
+      setLastNotification({
+        type: 'info',
+        message: `Report ${data.report_id} queued for ${receivingHospital}. Points will be credited once hospital verifies patient intake!`
+      });
+      return { success: true, data: mapReportRow(data, currentUser, config) };
     }
 
     const newReportId = `REP-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -835,11 +1174,26 @@ export function CitizenRescueProvider({ children }) {
     });
 
     return { success: true, data: newPending };
-  }, [currentUser, config]);
+  }, [currentUser, config, isRealUser, refreshCitizenData]);
 
   // ── SUBMIT APPEAL ─────────────────────────────────────────────────
   const submitAppeal = useCallback(async ({ reason, additionalEvidence }) => {
     if (!currentUser) return;
+
+    // Real account: the backend changes account status (users can't edit it themselves)
+    if (isRealUser) {
+      const { ok, json } = await callBackend('/api/citizen/appeal', { reason, additionalEvidence });
+      if (!ok) {
+        setLastNotification({ type: 'danger', message: json.error || 'Could not submit appeal.' });
+        return { success: false, error: json.error || 'Appeal failed' };
+      }
+      await refreshCitizenData();
+      setLastNotification({
+        type: 'info',
+        message: 'Appeal submitted to Hospital Oversight Board. Account status updated to Under Review.'
+      });
+      return { success: true };
+    }
 
     const updated = {
       ...currentUser,
@@ -859,10 +1213,16 @@ export function CitizenRescueProvider({ children }) {
     });
 
     return { success: true };
-  }, [currentUser]);
+  }, [currentUser, isRealUser, callBackend, refreshCitizenData]);
 
   // ── RESET STATE BASELINE ──────────────────────────────────────────
-  const resetToBaseline = useCallback(() => {
+  const resetToBaseline = useCallback(async () => {
+    // Real accounts are never overwritten by demo data: just re-sync from the database
+    if (isRealUser) {
+      await refreshCitizenData();
+      setLastNotification({ type: 'success', message: 'Account data refreshed from the database.' });
+      return;
+    }
     setCitizenDirectory(REGISTERED_CITIZENS);
     setCurrentUser(REGISTERED_CITIZENS[0]); // Reset to Aarav
     localStorage.setItem('lifeline_citizen_user', JSON.stringify(REGISTERED_CITIZENS[0]));
@@ -871,21 +1231,24 @@ export function CitizenRescueProvider({ children }) {
     setPendingVerifications(DEFAULT_PENDING_REPORTS);
     setLeaderboard(DEFAULT_LEADERBOARD);
     setLastNotification({ type: 'success', message: 'Demo state reset to default baseline.' });
-  }, []);
+  }, [isRealUser, refreshCitizenData]);
 
   return (
     <CitizenRescueContext.Provider value={{
       config,
       currentUser,
       isLoggedIn: !!currentUser,
+      isRealAccount: isRealUser,
+      authConfigured: isSupabaseConfigured,
       loginCitizen,
       logoutCitizen,
       registerCitizen,
+      refreshCitizenData,
       citizenDirectory,
       badges,
-      auditHistory,
-      pendingVerifications,
-      leaderboard,
+      auditHistory: effectiveAudit,
+      pendingVerifications: effectivePending,
+      leaderboard: effectiveLeaderboard,
       areaAggregates,
       orgAggregates,
       loading,

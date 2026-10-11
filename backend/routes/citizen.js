@@ -20,7 +20,7 @@
  *    are dynamically served via the /api/citizen/config endpoint.
  * ============================================================================
  */
-
+const { supabase, requireAuth } = require('../utils/supabase');
 const express = require('express');
 const router = express.Router();
 
@@ -526,22 +526,51 @@ router.get('/config', (req, res) => {
 
 // ── GET /api/citizen/profile ─────────────────────────────────────────────────
 // Returns active citizen profile, points, status, badges, and anti-abuse limits
-router.get('/profile', (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      profile: state.activeCitizen,
-      badges: state.badges,
-      antiAbuse: {
-        hourlyConsumed: state.activeCitizen.hourlyReportsSubmitted,
-        hourlyLimit: DYNAMIC_POINTS_CONFIG.antiAbuseRules.maxReportsPerHour,
-        dailyConsumed: state.activeCitizen.dailyReportsSubmitted,
-        dailyLimit: DYNAMIC_POINTS_CONFIG.antiAbuseRules.dailyLimit,
-        cooldownUntil: state.activeCitizen.cooldownUntil,
-        status: state.activeCitizen.accountStatus
-      }
+router.get('/profile', requireAuth, async (req, res) => {
+  const { data: profile, error } = await supabase
+    .from('citizens').select('*').eq('id', req.user.id).single();
+  if (error) return res.status(404).json({ success: false, error: 'Profile not found' });
+
+  const cfg = DYNAMIC_POINTS_CONFIG.antiAbuseRules;
+  const since = new Date(Date.now() - 3600_000).toISOString();
+  const dayAgo = new Date(Date.now() - 86400_000).toISOString();
+  const [{ count: hourly }, { count: daily }] = await Promise.all([
+    supabase.from('reports').select('*', { count: 'exact', head: true })
+      .eq('citizen_id', req.user.id).gte('reported_at', since),
+    supabase.from('reports').select('*', { count: 'exact', head: true })
+      .eq('citizen_id', req.user.id).gte('reported_at', dayAgo),
+  ]);
+
+  res.json({ success: true, data: {
+    profile,
+    badges: [], // compute from audit_log or keep your existing badge logic
+    antiAbuse: {
+      hourlyConsumed: hourly, hourlyLimit: cfg.maxReportsPerHour,
+      dailyConsumed: daily,   dailyLimit: cfg.dailyLimit,
+      cooldownUntil: profile.cooldown_until, status: profile.account_status
     }
-  });
+  }});
+});
+
+router.post('/report', requireAuth, async (req, res) => {
+  const { actionKey = 'VALID_INCIDENT_REPORT', emergencyType, location, details, receivingHospital } = req.body;
+
+  const { data: me } = await supabase.from('citizens').select('account_status, restriction_flag').eq('id', req.user.id).single();
+  if (me?.account_status === 'Restricted')
+    return res.status(403).json({ success: false, error: 'Account restricted. Submit an appeal first.', restriction: me.restriction_flag });
+
+  const { count } = await supabase.from('reports').select('*', { count: 'exact', head: true })
+    .eq('citizen_id', req.user.id).gte('reported_at', new Date(Date.now() - 3600_000).toISOString());
+  if (count >= DYNAMIC_POINTS_CONFIG.antiAbuseRules.maxReportsPerHour)
+    return res.status(429).json({ success: false, error: 'Rate limit reached.' });
+
+  const { data: report, error } = await supabase.from('reports').insert({
+    citizen_id: req.user.id, action_key: actionKey, emergency_type: emergencyType,
+    location, details, receiving_hospital: receivingHospital
+  }).select().single();
+  if (error) return res.status(500).json({ success: false, error: error.message });
+
+  res.json({ success: true, message: 'Report submitted. Points are credited after hospital verification.', data: { report } });
 });
 
 // ── GET /api/citizen/leaderboard ─────────────────────────────────────────────
@@ -762,65 +791,7 @@ router.post('/verify-report', (req, res) => {
   });
 });
 
-// ── POST /api/citizen/report ─────────────────────────────────────────────────
-// Allows citizen to submit a new emergency report (subject to rate limit & duplicate check)
-router.post('/report', (req, res) => {
-  const { actionKey = 'VALID_INCIDENT_REPORT', emergencyType = 'Road Collision', location = 'MG Road Metro Station', details = '', receivingHospital = 'Victoria Hospital ER' } = req.body;
 
-  // 1. Anti-abuse check: Account restriction
-  if (state.activeCitizen.accountStatus === 'Restricted') {
-    return res.status(403).json({
-      success: false,
-      error: 'Account is currently restricted due to a flagged report. Please submit an appeal before filing new reports.',
-      restriction: state.activeCitizen.restrictionFlag
-    });
-  }
-
-  // 2. Anti-abuse check: Rate limit
-  if (state.activeCitizen.hourlyReportsSubmitted >= DYNAMIC_POINTS_CONFIG.antiAbuseRules.maxReportsPerHour) {
-    return res.status(429).json({
-      success: false,
-      error: `Rate limit reached. Maximum ${DYNAMIC_POINTS_CONFIG.antiAbuseRules.maxReportsPerHour} reports per hour allowed to prevent abuse.`,
-      rateLimit: {
-        consumed: state.activeCitizen.hourlyReportsSubmitted,
-        limit: DYNAMIC_POINTS_CONFIG.antiAbuseRules.maxReportsPerHour
-      }
-    });
-  }
-
-  const newReportId = `REP-${Math.floor(1000 + Math.random() * 9000)}`;
-  const rule = DYNAMIC_POINTS_CONFIG.rules[actionKey] || DYNAMIC_POINTS_CONFIG.rules.VALID_INCIDENT_REPORT;
-
-  const newPending = {
-    reportId: newReportId,
-    citizenId: state.activeCitizen.citizenId,
-    citizenName: state.activeCitizen.fullName,
-    actionKey,
-    actionLabel: rule.label,
-    emergencyType,
-    location,
-    reportedAt: new Date().toISOString(),
-    patientIntakeStatus: 'Dispatched / In Transit to ER',
-    ambulanceAssigned: 'AMB-004 (Active Unit)',
-    receivingHospital,
-    details: details || `Citizen reported ${emergencyType} at ${location}.`,
-    duplicateScore: '0.04 (Clear of Duplicates)',
-    status: 'AWAITING_HOSPITAL_VERIFICATION'
-  };
-
-  state.pendingVerifications.unshift(newPending);
-  state.activeCitizen.hourlyReportsSubmitted += 1;
-  state.activeCitizen.dailyReportsSubmitted += 1;
-
-  res.json({
-    success: true,
-    message: 'Report submitted successfully. Points will be credited once verified by Hospital Triage.',
-    data: {
-      report: newPending,
-      hourlyRemaining: DYNAMIC_POINTS_CONFIG.antiAbuseRules.maxReportsPerHour - state.activeCitizen.hourlyReportsSubmitted
-    }
-  });
-});
 
 // ── POST /api/citizen/appeal ─────────────────────────────────────────────────
 // Allows citizen to appeal account restriction
