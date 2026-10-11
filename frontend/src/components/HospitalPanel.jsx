@@ -121,7 +121,7 @@ function HospitalCard({ hospital, rank, selected, onSelect, emergencyType, allHo
       }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#4a7090' }}>
-            🛏 {hospital.beds}
+            🛏 {hospital.beds != null ? hospital.beds : 'Unknown'}
           </span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#4a7090' }}>
             ⭐ {hospital.rating}

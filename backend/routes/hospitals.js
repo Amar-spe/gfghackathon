@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const staticHospitals = require('../data/hospitals.json');
-const { scoreHospital } = require('../utils/aiEngine');
+const { scoreHospital, getRecommendationReasons } = require('../utils/aiEngine');
 
 const OVERPASS_ENDPOINTS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
@@ -102,7 +102,8 @@ async function fetchOverpassHospitals(lat, lng) {
       lng: elLon,
       type,
       capability: isHosp ? 65 + Math.floor(pseudoRandom(1) * 33) : 35 + Math.floor(pseudoRandom(1) * 30),
-      beds: tags.beds ? parseInt(tags.beds) : (isHosp ? 100 + Math.floor(pseudoRandom(2) * 400) : 10 + Math.floor(pseudoRandom(2) * 20)),
+      // Missing capacity must remain unknown per clinical guidelines; only use explicitly tagged beds
+      beds: tags.beds ? parseInt(tags.beds, 10) : null,
       cardiac: nameLow.includes('heart') || nameLow.includes('cardiac') || (isHosp && pseudoRandom(3) > 0.35),
       trauma: nameLow.includes('trauma') || nameLow.includes('emergency') || (isHosp && pseudoRandom(4) > 0.40),
       neuro: nameLow.includes('neuro') || nameLow.includes('brain') || (isHosp && pseudoRandom(5) > 0.65),
@@ -129,6 +130,10 @@ router.get('/nearby', async (req, res) => {
   const centerLat = parseFloat(lat);
   const centerLng = parseFloat(lng);
 
+  if (isNaN(centerLat) || isNaN(centerLng)) {
+    return res.status(400).json({ error: 'lat and lng must be valid numbers' });
+  }
+
   const result = await fetchOverpassHospitals(centerLat, centerLng);
   res.json({
     hospitals: result.hospitals,
@@ -148,26 +153,37 @@ router.get('/', (req, res) => {
 router.post('/rank', (req, res) => {
   const { lat, lng, emergencyType = 'Accident', trafficConditions = {}, emergencyMode = false, hospitals = null } = req.body;
 
-  if (!lat || !lng) {
+  if (lat == null || lng == null) {
     return res.status(400).json({ error: 'lat and lng required in body' });
   }
 
-  const emergencyLoc = { lat: parseFloat(lat), lng: parseFloat(lng) };
-  const targetHospitals = (hospitals && hospitals.length > 0) ? hospitals : staticHospitals;
+  const centerLat = parseFloat(lat);
+  const centerLng = parseFloat(lng);
 
-  const rankedHospitals = targetHospitals.map(h => {
+  if (isNaN(centerLat) || isNaN(centerLng)) {
+    return res.status(400).json({ error: 'lat and lng must be valid numbers' });
+  }
+
+  const emergencyLoc = { lat: centerLat, lng: centerLng };
+  const targetHospitals = (Array.isArray(hospitals) && hospitals.length > 0) ? hospitals : staticHospitals;
+
+  const scoredHospitals = targetHospitals.map(h => {
     const scoring = scoreHospital(h, emergencyLoc, emergencyType, trafficConditions, emergencyMode);
     return { ...h, ...scoring };
   }).sort((a, b) => b.score - a.score);
 
+  const rankedHospitals = scoredHospitals.map(h => ({
+    ...h,
+    reasons: getRecommendationReasons(h, emergencyType, scoredHospitals)
+  }));
+
   res.json({
     rankedHospitals,
     top3: rankedHospitals.slice(0, 3),
-    recommended: rankedHospitals[0],
+    recommended: rankedHospitals[0] || null,
     emergencyType,
     rankedAt: new Date().toISOString()
   });
 });
 
 module.exports = router;
-
