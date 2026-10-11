@@ -1,3 +1,4 @@
+const { olaDirections } = require('../utils/ola');
 const express = require('express');
 const router = express.Router();
 
@@ -7,6 +8,14 @@ function interpolate(a, b, t) {
 
 function addWaypoint(lat, lng, scale = 0.004) {
   return [lat + (Math.random() - 0.5) * scale, lng + (Math.random() - 0.5) * scale];
+}
+
+function haversine(a, b) {
+  const R = 6371;
+  const dLat = (b[0] - a[0]) * Math.PI / 180;
+  const dLng = (b[1] - a[1]) * Math.PI / 180;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * Math.PI / 180) * Math.cos(b[0] * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
 function generateRoute(from, through, to, steps = 120) {
@@ -48,7 +57,7 @@ function generateRoute(from, through, to, steps = 120) {
 }
 
 // POST /api/calculate-route
-router.post('/', (req, res) => {
+router.post('/',async (req, res)  => {
   const { ambulance, emergency, hospital, emergencyMode = false } = req.body;
 
   if (!ambulance || !emergency || !hospital) {
@@ -59,34 +68,32 @@ router.post('/', (req, res) => {
   const through = [emergency.lat, emergency.lng];
   const to = [hospital.lat, hospital.lng];
 
-  const routePoints = generateRoute(from, through, to, 120);
+  let routePoints, totalDistance, normalTime, pickupIndex;
+try {
+  const [leg1, leg2] = await Promise.all([olaDirections(from, through), olaDirections(through, to)]);
+  routePoints = [...leg1.points, ...leg2.points.slice(1)];
+  pickupIndex = leg1.points.length - 1;                  // emergency point
+  totalDistance = (leg1.meters + leg2.meters) / 1000;    // km
+  normalTime = (leg1.seconds + leg2.seconds) / 60;       // minutes
+} catch (err) {
+  console.warn('Ola Maps failed, using simulated route:', err.message);
+  routePoints = generateRoute(from, through, to, 120);
+  totalDistance = 0;
+  for (let i = 1; i < routePoints.length; i++) totalDistance += haversine(routePoints[i - 1], routePoints[i]);
+  normalTime = (totalDistance / 35) * 60;
+  pickupIndex = Math.floor(routePoints.length * 0.45);
+}
+const optimizedTime = normalTime * (emergencyMode ? 0.58 : 0.78);
 
-  // Haversine for each segment to get total distance
-  function haversine(a, b) {
-    const R = 6371;
-    const dLat = (b[0] - a[0]) * Math.PI / 180;
-    const dLng = (b[1] - a[1]) * Math.PI / 180;
-    const x = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * Math.PI / 180) * Math.cos(b[0] * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-  }
-
-  let totalDistance = 0;
-  for (let i = 1; i < routePoints.length; i++) {
-    totalDistance += haversine(routePoints[i - 1], routePoints[i]);
-  }
-
-  const normalTime = (totalDistance / 35) * 60;
-  const optimizedTime = normalTime * (emergencyMode ? 0.58 : 0.78);
-
-  res.json({
-    route: routePoints,
-    totalPoints: routePoints.length,
-    totalDistance: Math.round(totalDistance * 100) / 100,
-    normalTime: Math.round(normalTime * 10) / 10,
-    optimizedTime: Math.round(optimizedTime * 10) / 10,
-    pickupIndex: Math.floor(routePoints.length * 0.45),
-    calculatedAt: new Date().toISOString()
-  });
+res.json({
+  route: routePoints,
+  totalPoints: routePoints.length,
+  totalDistance: Math.round(totalDistance * 100) / 100,
+  normalTime: Math.round(normalTime * 10) / 10,
+  optimizedTime: Math.round(optimizedTime * 10) / 10,
+  pickupIndex,
+  calculatedAt: new Date().toISOString()
+});
 });
 
 module.exports = router;
