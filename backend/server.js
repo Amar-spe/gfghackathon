@@ -6,6 +6,7 @@ const ambulancesRouter = require('./routes/ambulances');
 const hospitalsRouter = require('./routes/hospitals');
 const routeRouter = require('./routes/route');
 const aiDecisionRouter = require('./routes/aiDecision');
+const citizenRouter = require('./routes/citizen');
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/api/ambulances', ambulancesRouter);
 app.use('/api/hospitals', hospitalsRouter);
 app.use('/api/calculate-route', routeRouter);
 app.use('/api/ai-decision', aiDecisionRouter);
+app.use('/api/citizen', citizenRouter);
 
 // Error handler
 app.use((err, req, res, next) => {

@@ -20,8 +20,8 @@ export default {
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', '"Fira Code"', 'monospace'],
-        display: ['"Orbitron"', 'sans-serif'],
-        body: ['"Exo 2"', 'sans-serif'],
+        display: ['"Space Grotesk"', '"Orbitron"', 'sans-serif'],
+        body: ['"Plus Jakarta Sans"', '"Exo 2"', 'sans-serif'],
       },
       animation: {
         'pulse-slow': 'pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',

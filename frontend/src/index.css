@@ -16,8 +16,8 @@
   --red-soft:    #ef4444;
   --text:        #111827;
   --muted:       #6b7280;
-  --font-display: 'Orbitron', sans-serif;
-  --font-body:    'Exo 2', sans-serif;
+  --font-display: 'Space Grotesk', 'Orbitron', sans-serif;
+  --font-body:    'Plus Jakarta Sans', 'Exo 2', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono:    'JetBrains Mono', monospace;
 }
 

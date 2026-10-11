@@ -41,6 +41,7 @@ export default function Dashboard({
   trafficConditions,
   emergencyMode,
   rerouteCount = 0,
+  onOpenCitizenDashboard,
 }) {
   if (phase === 'idle') return null;
 
@@ -159,6 +160,26 @@ export default function Dashboard({
             fontFamily: 'var(--font-mono)',
             fontSize: 10, color: 'var(--muted)', marginTop: 2,
           }}>Ambulance arrived at {selectedHospital?.name}</div>
+
+          {onOpenCitizenDashboard && (
+            <button
+              onClick={onOpenCitizenDashboard}
+              style={{
+                marginTop: 6,
+                padding: '4px 10px',
+                borderRadius: 6,
+                fontSize: 10,
+                fontFamily: 'var(--font-mono)',
+                fontWeight: 700,
+                background: 'rgba(0,255,136,0.2)',
+                color: '#00ff88',
+                border: '1px solid rgba(0,255,136,0.4)',
+                cursor: 'pointer',
+              }}
+            >
+              🏥 Review & Verify Community Report (+RIP)
+            </button>
+          )}
         </div>
       )}
     </div>

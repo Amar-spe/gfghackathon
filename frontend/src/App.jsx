@@ -10,6 +10,7 @@ import AlertSystem from './components/AlertSystem';
 import Dashboard from './components/Dashboard';
 import SOSOverlay from './components/SOSOverlay';
 import DispatchTimeline from './components/DispatchTimeline';
+import CitizenDashboard from './components/citizen/CitizenDashboard';
 
 import { scoreAmbulance, scoreHospital } from './utils/aiEngine';
 import {
@@ -28,6 +29,7 @@ import {
 export default function App() {
   // ── Core state ──────────────────────────────────────────────────
   const [phase, setPhase]                           = useState('idle');
+  const [currentView, setCurrentView]               = useState('dispatch'); // 'dispatch' | 'citizen' | 'hospital'
   const [emergencyLocation, setEmergencyLocation]   = useState(null);
   const [emergencyType, setEmergencyType]           = useState('Accident');
 
@@ -667,139 +669,152 @@ export default function App() {
         onCancel={handleSOSCancel}
         onConfirm={handleSOSConfirm}
       />
-      <Header phase={phase} currentTime={currentTime} onMenuToggle={() => setSidebarOpen(o => !o)} />
-
-      <div className="flex-1 flex overflow-hidden min-h-0 relative">
-        {/* ── Mobile overlay backdrop ──────────────────────────────── */}
-        {sidebarOpen && (
-          <div
-            className="fixed inset-0 bg-black/50 z-[200] md:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
-
-        {/* ── Left sidebar ────────────────────────────────────────── */}
-        <div className={`
-          fixed md:relative inset-y-0 left-0 z-[300] md:z-auto
-          w-80 shrink-0 flex flex-col overflow-hidden
-          bg-white dark:bg-brand-bg border-r border-gray-200 dark:border-brand-border
-          transition-transform duration-300 ease-in-out
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        `}>
-          {/* Mobile close button */}
-          <div className="flex items-center justify-between px-3 pt-3 md:hidden">
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 10, color: '#4a7090', letterSpacing: '0.15em' }}>CONTROL PANEL</span>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              style={{ color: '#4a7090', fontSize: 18, background: 'none', border: 'none', cursor: 'pointer' }}
-            >✕</button>
-          </div>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-2.5">
-            <EmergencyInput
-              emergencyType={emergencyType}
-              onChange={handleEmergencyTypeChange}
-              phase={phase}
-              emergencyLocation={emergencyLocation}
-            />
-            <AmbulancePanel
-              ambulances={ambulances}
-              selectedAmbulance={selectedAmbulance}
-              onSelect={setSelectedAmbulance}
-              trafficConditions={trafficConditions}
-              phase={phase}
-            />
-            <HospitalPanel
-              rankedHospitals={rankedHospitals}
-              selectedHospital={selectedHospital}
-              onSelect={setSelectedHospital}
-              phase={phase}
-              loading={hospitalLoading}
-              emergencyType={emergencyType}
-            />
-            <RouteSelector
-              routeMode={routeMode}
-              onChange={setRouteMode}
-              phase={phase}
-              selectedHospital={selectedHospital}
-              trafficConditions={trafficConditions}
-              routeMetrics={routeMetrics}
-            />
-            <DispatchTimeline
-              steps={dispatchTimeline}
-              phase={phase}
-            />
-          </div>
-        </div>
-
-        {/* ── Map area ─────────────────────────────────────────────── */}
-        <div className="flex-1 relative overflow-hidden">
-          <MapView
-            emergencyLocation={emergencyLocation}
-            ambulances={ambulances}
-            selectedAmbulance={selectedAmbulance}
-            hospitals={localHospitals}
-            rankedHospitals={rankedHospitals}
-            selectedHospital={selectedHospital}
-            shortestRoute={shortestRoute}
-            optimalRoute={optimalRoute}
-            alternativeRoute={alternativeRoute}
-            route={route}
-            alternateRoutes={alternateRoutes}
-            ambulancePosition={ambulancePosition}
-            trafficSegments={trafficEnabled ? trafficSegments : []}
-            trafficEnabled={trafficEnabled}
-            phase={phase}
-            onMapClick={handleMapClick}
-            onSelectAmbulance={setSelectedAmbulance}
-            onSelectHospital={setSelectedHospital}
-            onSelectAlternate={handleSelectAlternate}
-            pickupIndex={pickupIndex}
-            activeRouteType={activeRouteType}
-            routeMode={routeMode}
-          />
-
-          <Dashboard
-            phase={phase}
-            selectedAmbulance={selectedAmbulance}
-            selectedHospital={selectedHospital}
-            eta={eta}
-            distance={distance}
-            routeProgress={routeProgress}
-            trafficConditions={trafficConditions}
-            emergencyMode={emergencyMode}
-            rerouteCount={rerouteCount}
-          />
-
-          <div className="absolute top-4 right-2 z-[1000] w-64 md:w-72">
-            <AlertSystem alerts={alerts} onRemove={removeAlert} />
-          </div>
-
-          {/* Mobile dispatch button floating on map */}
-          {phase === 'located' && selectedAmbulance && selectedHospital && (
-            <button
-              onClick={handleDispatch}
-              className="btn-dispatch md:hidden absolute bottom-4 left-1/2 -translate-x-1/2 z-[900] px-8 py-3 rounded-xl text-sm"
-            >
-              🚑 DISPATCH
-            </button>
-          )}
-        </div>
-      </div>
-
-      <ControlPanel
-        trafficEnabled={trafficEnabled}
-        onTrafficToggle={setTrafficEnabled}
-        emergencyMode={emergencyMode}
-        onEmergencyModeToggle={handleEmergencyModeToggle}
-        simulationSpeed={simulationSpeed}
-        onSimulationSpeedChange={setSimulationSpeed}
-        onSimulateTraffic={handleSimulateTraffic}
-        onDispatch={handleDispatch}
-        onReset={handleReset}
+      <Header
         phase={phase}
-        selectedAmbulance={selectedAmbulance}
-        selectedHospital={selectedHospital}
+        currentTime={currentTime}
+        onMenuToggle={() => setSidebarOpen(o => !o)}
+        currentView={currentView}
+        onViewChange={setCurrentView}
       />
+
+      {currentView !== 'dispatch' ? (
+        <CitizenDashboard onBackToDispatch={() => setCurrentView('dispatch')} />
+      ) : (
+        <>
+          <div className="flex-1 flex overflow-hidden min-h-0 relative">
+            {/* ── Mobile overlay backdrop ──────────────────────────────── */}
+            {sidebarOpen && (
+              <div
+                className="fixed inset-0 bg-black/50 z-[200] md:hidden"
+                onClick={() => setSidebarOpen(false)}
+              />
+            )}
+
+            {/* ── Left sidebar ────────────────────────────────────────── */}
+            <div className={`
+              fixed md:relative inset-y-0 left-0 z-[300] md:z-auto
+              w-80 shrink-0 flex flex-col overflow-hidden
+              bg-white dark:bg-brand-bg border-r border-gray-200 dark:border-brand-border
+              transition-transform duration-300 ease-in-out
+              ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+            `}>
+              {/* Mobile close button */}
+              <div className="flex items-center justify-between px-3 pt-3 md:hidden">
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: 10, color: '#4a7090', letterSpacing: '0.15em' }}>CONTROL PANEL</span>
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  style={{ color: '#4a7090', fontSize: 18, background: 'none', border: 'none', cursor: 'pointer' }}
+                >✕</button>
+              </div>
+              <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-2.5">
+                <EmergencyInput
+                  emergencyType={emergencyType}
+                  onChange={handleEmergencyTypeChange}
+                  phase={phase}
+                  emergencyLocation={emergencyLocation}
+                />
+                <AmbulancePanel
+                  ambulances={ambulances}
+                  selectedAmbulance={selectedAmbulance}
+                  onSelect={setSelectedAmbulance}
+                  trafficConditions={trafficConditions}
+                  phase={phase}
+                />
+                <HospitalPanel
+                  rankedHospitals={rankedHospitals}
+                  selectedHospital={selectedHospital}
+                  onSelect={setSelectedHospital}
+                  phase={phase}
+                  loading={hospitalLoading}
+                  emergencyType={emergencyType}
+                />
+                <RouteSelector
+                  routeMode={routeMode}
+                  onChange={setRouteMode}
+                  phase={phase}
+                  selectedHospital={selectedHospital}
+                  trafficConditions={trafficConditions}
+                  routeMetrics={routeMetrics}
+                />
+                <DispatchTimeline
+                  steps={dispatchTimeline}
+                  phase={phase}
+                />
+              </div>
+            </div>
+
+            {/* ── Map area ─────────────────────────────────────────────── */}
+            <div className="flex-1 relative overflow-hidden">
+              <MapView
+                emergencyLocation={emergencyLocation}
+                ambulances={ambulances}
+                selectedAmbulance={selectedAmbulance}
+                hospitals={localHospitals}
+                rankedHospitals={rankedHospitals}
+                selectedHospital={selectedHospital}
+                shortestRoute={shortestRoute}
+                optimalRoute={optimalRoute}
+                alternativeRoute={alternativeRoute}
+                route={route}
+                alternateRoutes={alternateRoutes}
+                ambulancePosition={ambulancePosition}
+                trafficSegments={trafficEnabled ? trafficSegments : []}
+                trafficEnabled={trafficEnabled}
+                phase={phase}
+                onMapClick={handleMapClick}
+                onSelectAmbulance={setSelectedAmbulance}
+                onSelectHospital={setSelectedHospital}
+                onSelectAlternate={handleSelectAlternate}
+                pickupIndex={pickupIndex}
+                activeRouteType={activeRouteType}
+                routeMode={routeMode}
+              />
+
+              <Dashboard
+                phase={phase}
+                selectedAmbulance={selectedAmbulance}
+                selectedHospital={selectedHospital}
+                eta={eta}
+                distance={distance}
+                routeProgress={routeProgress}
+                trafficConditions={trafficConditions}
+                emergencyMode={emergencyMode}
+                rerouteCount={rerouteCount}
+                onOpenCitizenDashboard={() => setCurrentView('citizen')}
+              />
+
+              <div className="absolute top-4 right-2 z-[1000] w-64 md:w-72">
+                <AlertSystem alerts={alerts} onRemove={removeAlert} />
+              </div>
+
+              {/* Mobile dispatch button floating on map */}
+              {phase === 'located' && selectedAmbulance && selectedHospital && (
+                <button
+                  onClick={handleDispatch}
+                  className="btn-dispatch md:hidden absolute bottom-4 left-1/2 -translate-x-1/2 z-[900] px-8 py-3 rounded-xl text-sm"
+                >
+                  🚑 DISPATCH
+                </button>
+              )}
+            </div>
+          </div>
+
+          <ControlPanel
+            trafficEnabled={trafficEnabled}
+            onTrafficToggle={setTrafficEnabled}
+            emergencyMode={emergencyMode}
+            onEmergencyModeToggle={handleEmergencyModeToggle}
+            simulationSpeed={simulationSpeed}
+            onSimulationSpeedChange={setSimulationSpeed}
+            onSimulateTraffic={handleSimulateTraffic}
+            onDispatch={handleDispatch}
+            onReset={handleReset}
+            phase={phase}
+            selectedAmbulance={selectedAmbulance}
+            selectedHospital={selectedHospital}
+          />
+        </>
+      )}
     </div>
   );
 }

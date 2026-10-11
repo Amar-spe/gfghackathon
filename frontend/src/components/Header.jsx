@@ -1,4 +1,5 @@
 import React from 'react';
+import { useCitizenRescue } from '../context/CitizenRescueContext';
 
 const PHASE_STATUS = {
   idle:       { label: 'STANDBY',    color: '#4a7090', dot: '#4a7090' },
@@ -8,8 +9,15 @@ const PHASE_STATUS = {
   arrived:    { label: 'ARRIVED',    color: '#00ff88', dot: '#00ff88' },
 };
 
-export default function Header({ phase, currentTime, onMenuToggle }) {
+export default function Header({
+  phase,
+  currentTime,
+  onMenuToggle,
+  currentView = 'dispatch',
+  onViewChange = () => {}
+}) {
   const status = PHASE_STATUS[phase] || PHASE_STATUS.idle;
+  const { currentUser, pendingVerifications } = useCitizenRescue();
 
   return (
     <header style={{
@@ -58,36 +66,114 @@ export default function Header({ phase, currentTime, onMenuToggle }) {
         </div>
       </div>
 
-      {/* Center: Status */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      {/* Center: View Navigation Switcher & Dispatch Status */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {/* View Switcher Pills */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'rgba(10,30,53,0.8)',
-          border: `1px solid ${status.color}33`,
-          borderRadius: 6, padding: '4px 12px',
+          display: 'flex', alignItems: 'center', gap: 4,
+          background: 'rgba(7,21,37,0.85)',
+          padding: '3px 4px',
+          borderRadius: 8,
+          border: '1px solid #0f3060',
         }}>
-          <div style={{
-            width: 7, height: 7, borderRadius: '50%',
-            background: status.dot,
-            boxShadow: `0 0 8px ${status.dot}`,
-            animation: phase === 'enroute' ? 'pulse 1s ease-in-out infinite' : 'none',
-          }} />
-          <span style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 10, fontWeight: 600,
-            color: status.color,
-            letterSpacing: '0.12em',
-          }}>{status.label}</span>
+          {/* View 1: Dispatch */}
+          <button
+            onClick={() => onViewChange('dispatch')}
+            style={{
+              padding: '4px 10px', borderRadius: 6,
+              fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700,
+              letterSpacing: '0.08em',
+              border: currentView === 'dispatch' ? '1px solid #00d4ff66' : '1px solid transparent',
+              background: currentView === 'dispatch' ? 'rgba(0,212,255,0.18)' : 'transparent',
+              color: currentView === 'dispatch' ? '#00d4ff' : '#4a7090',
+              cursor: 'pointer', transition: 'all 0.2s',
+              display: 'flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            <span>🚨</span>
+            <span className="hidden md:inline">DISPATCH</span>
+          </button>
+
+          {/* View 2: Citizen Impact */}
+          <button
+            onClick={() => onViewChange('citizen')}
+            style={{
+              padding: '4px 10px', borderRadius: 6,
+              fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700,
+              letterSpacing: '0.08em',
+              border: currentView === 'citizen' ? '1px solid #00ff8866' : '1px solid transparent',
+              background: currentView === 'citizen' ? 'rgba(0,255,136,0.18)' : 'transparent',
+              color: currentView === 'citizen' ? '#00ff88' : '#4a7090',
+              cursor: 'pointer', transition: 'all 0.2s',
+              display: 'flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            <span>👤</span>
+            <span className="hidden md:inline">
+              {currentUser ? currentUser.fullName.split(' ')[0] : 'CITIZEN'}
+            </span>
+            <span style={{
+              fontSize: 9, fontFamily: 'var(--font-mono)',
+              padding: '1px 5px', borderRadius: 4,
+              background: currentUser ? 'rgba(0,255,136,0.2)' : 'rgba(255,165,0,0.15)',
+              color: currentUser ? '#00ff88' : '#ffa500',
+              fontWeight: 800,
+            }}>
+              {currentUser ? `${currentUser.totalPoints}p` : '🔒 Sign In'}
+            </span>
+          </button>
+
+          {/* View 3: Hospital Triage */}
+          <button
+            onClick={() => onViewChange('hospital')}
+            style={{
+              padding: '4px 10px', borderRadius: 6,
+              fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700,
+              letterSpacing: '0.08em',
+              border: currentView === 'hospital' ? '1px solid #ffa50066' : '1px solid transparent',
+              background: currentView === 'hospital' ? 'rgba(255,165,0,0.18)' : 'transparent',
+              color: currentView === 'hospital' ? '#ffa500' : '#4a7090',
+              cursor: 'pointer', transition: 'all 0.2s',
+              display: 'flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            <span>🏥</span>
+            <span className="hidden md:inline">HOSPITAL TRIAGE</span>
+            {pendingVerifications?.length > 0 && (
+              <span style={{
+                fontSize: 9, fontFamily: 'var(--font-mono)',
+                padding: '1px 5px', borderRadius: 4,
+                background: 'rgba(255,165,0,0.3)', color: '#ffa500',
+                fontWeight: 800,
+              }}>
+                {pendingVerifications.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        <div className="hidden lg:flex" style={{
-          gap: 16,
-          fontFamily: 'var(--font-mono)', fontSize: 10, color: '#4a7090',
-        }}>
-          <span>BENGALURU <span style={{ color: '#00d4ff' }}>CITY</span></span>
-          <span style={{ color: '#0f3060' }}>|</span>
-          <span>DISPATCH <span style={{ color: '#00ff88' }}>ACTIVE</span></span>
-        </div>
+        {/* Status Pill (When on dispatch view) */}
+        {currentView === 'dispatch' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'rgba(10,30,53,0.8)',
+            border: `1px solid ${status.color}33`,
+            borderRadius: 6, padding: '4px 10px',
+          }} className="hidden xl:flex">
+            <div style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: status.dot,
+              boxShadow: `0 0 8px ${status.dot}`,
+              animation: phase === 'enroute' ? 'pulse 1s ease-in-out infinite' : 'none',
+            }} />
+            <span style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 10, fontWeight: 600,
+              color: status.color,
+              letterSpacing: '0.12em',
+            }}>{status.label}</span>
+          </div>
+        )}
       </div>
 
       {/* Right: Clock */}
