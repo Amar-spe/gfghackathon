@@ -1,14 +1,14 @@
 # 🚑 LifeLine AI — Intelligent Emergency Response & Dispatch System
 
-> **Next-Gen AI-Powered Ambulance Dispatch and Dynamic OpenStreetMap Hospital Recommendation Engine for Smart Cities.**
+> **Next-Gen AI-Powered Ambulance Dispatch and Dynamic Ola Maps Hospital Recommendation Engine for Smart Cities.**
 > 
-> *Real-time traffic integration, 35/35/20/10 multi-factor AI scoring, 5-step dispatch timeline, and seamless mid-journey road rerouting.*
+> *Ola Maps routing integration, real-time traffic integration, 35/35/20/10 multi-factor AI scoring, 5-step dispatch timeline, and seamless mid-journey road rerouting.*
 
 ---
 
 ## 🌟 Overview
 
-**LifeLine AI** is a state-of-the-art emergency dispatch and hospital recommendation platform. It transforms traditional static dispatching into a dynamic, data-driven emergency management network. By proxying real-time OpenStreetMap (OSM) data via high-availability Overpass mirrors, calculating road-snapped routes with OSRM, and tracking 5 dispatch milestones, LifeLine AI ensures emergency units reach patients and deliver them to optimal medical facilities in minimal time.
+**LifeLine AI** is a state-of-the-art emergency dispatch and hospital recommendation platform. It transforms traditional static dispatching into a dynamic, data-driven emergency management network. Powered by **Ola Maps** routing and cartography, calculating road-snapped routes with high-precision road networks, and tracking 5 dispatch milestones, LifeLine AI ensures emergency units reach patients and deliver them to optimal medical facilities in minimal time.
 
 ---
 
@@ -16,13 +16,13 @@
 
 | Feature | Description |
 |---|---|
-| 🗺️ **Interactive Geo-Spatial Map** | Click anywhere on the map to drop emergency coordinates with custom Leaflet markers |
-| 🏥 **Dynamic OSM Hospital Search** | Live OpenStreetMap facility retrieval with progressive radius expansion ($1\text{km} \rightarrow 3\text{km} \rightarrow 5\text{km} \rightarrow 10\text{km} \rightarrow 20\text{km} \rightarrow 50\text{km} \rightarrow 100\text{km}$) via multi-mirror Overpass proxies |
+| 🗺️ **Interactive Ola Maps Geo-Spatial Navigation** | Click anywhere on the map to drop emergency coordinates with custom Leaflet & Ola Maps cartography markers |
+| 🏥 **Dynamic Hospital Search** | Live facility retrieval with progressive radius expansion ($1\text{km} \rightarrow 3\text{km} \rightarrow 5\text{km} \rightarrow 10\text{km} \rightarrow 20\text{km} \rightarrow 50\text{km} \rightarrow 100\text{km}$) |
 | 🏷️ **AI Recommendation Reasons** | Context-aware rationale tags (*"Fastest travel time"*, *"Cardiology unit available"*, *"Low traffic corridor"*, *"Top rated facility"*) rendered on top-ranked hospitals |
 | 🚑 **Enriched Ambulance Fleet** | Road-snapped ambulance units with realistic metadata (driver name, crew size, speed km/h, equipment type `BLS`/`ALS`/`ICU`, availability status) |
 | 🧠 **Multi-Factor AI Scoring** | Balanced 35% Distance + 35% Travel Time + 20% Specialty Match + 10% Rating/Availability scoring matrix |
 | 📋 **5-Step Dispatch Timeline** | Live sidebar progress tracking: *Emergency Created* $\rightarrow$ *Ambulance Assigned* $\rightarrow$ *Ambulance En Route* $\rightarrow$ *Patient Picked Up* $\rightarrow$ *Reached Hospital* |
-| 🛣️ **Multi-Route Road System** | Calculates Shortest (Blue), Optimal (Green), and Alternative (Purple) road geometries via OSRM and OpenRouteService |
+| 🛣️ **Ola Maps Multi-Route System** | Calculates Shortest, Optimal, and Alternative road corridors via Ola Maps turn-by-turn routing engine |
 | 🚦 **Traffic Surge Simulation** | Color-coded congestion segments with live speed ratio monitoring and manual traffic surge triggers |
 | ⚡ **Seamless Mid-Journey Rerouting** | Automatically recalculates routes from current ambulance coordinates upon traffic spikes while preserving patient pickup state (zero teleportation) |
 | 🚨 **Instant SOS Workflow** | Press `~` backtick hotkey or SOS button to trigger live browser geolocation, auto-select ICU/Cardiac units, and dispatch instantly |
@@ -67,7 +67,7 @@
 
 ### **Backend:**
 - **Runtime**: Node.js, Express.js
-- **External APIs**: OpenStreetMap Overpass API, OSRM Driving Router, OpenRouteService, TomTom Traffic API
+- **External APIs**: Ola Maps Directions & Geocoding APIs, TomTom Traffic API, Supabase Identity, Overpass Mirrors
 - **Middleware**: CORS, Dotenv, Error Handler
 
 ---
@@ -174,7 +174,7 @@ Visit **`http://localhost:3000`** in your browser.
 ## 🔌 API Endpoints Reference
 
 ### 1. `GET /api/hospitals/nearby?lat={lat}&lng={lng}`
-Proxies OpenStreetMap Overpass API across multiple high-availability mirrors with progressive search expansion ($1\text{km} \rightarrow 100\text{km}$).
+Retrieves dynamic medical facilities with progressive search radius expansion ($1\text{km} \rightarrow 100\text{km}$).
 ```json
 {
   "hospitals": [

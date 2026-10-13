@@ -1,45 +1,32 @@
 import React, { useState } from 'react';
 import { EMERGENCY_PROFILES } from '../utils/aiEngine';
+import { Heart, Activity, Flame, Baby, AlertTriangle, ShieldAlert, Stethoscope, Sparkles } from 'lucide-react';
 
 const EMERGENCY_TYPES = [
-  'Cardiac Arrest',
-  'Heart Attack',
-  'Stroke',
-  'Accident',
-  'Trauma',
-  'Burn',
-  'Pregnancy',
-  'General',
-  'Other',
+  { id: 'Cardiac Arrest', label: 'Cardiac Arrest', icon: Heart, color: 'text-red-500' },
+  { id: 'Heart Attack',   label: 'Heart Attack',   icon: Activity, color: 'text-rose-500' },
+  { id: 'Stroke',         label: 'Stroke',         icon: AlertTriangle, color: 'text-purple-500' },
+  { id: 'Accident',       label: 'Traffic Crash',  icon: ShieldAlert, color: 'text-orange-500' },
+  { id: 'Trauma',         label: 'Severe Trauma',  icon: AlertTriangle, color: 'text-red-500' },
+  { id: 'Burn',           label: 'Burn Injury',    icon: Flame, color: 'text-amber-500' },
+  { id: 'Pregnancy',      label: 'Obstetric Emergency', icon: Baby, color: 'text-pink-500' },
+  { id: 'General',        label: 'General Medical', icon: Stethoscope, color: 'text-teal' },
+  { id: 'Other',          label: 'Custom Emergency', icon: Sparkles, color: 'text-blue-500' },
 ];
 
-const EMERGENCY_ICONS = {
-  'Cardiac Arrest': '❤️',
-  'Heart Attack':   '💔',
-  'Stroke':         '🧠',
-  'Accident':       '💥',
-  'Trauma':         '🩸',
-  'Burn':           '🔥',
-  'Pregnancy':      '🤰',
-  'General':        '🏥',
-  'Other':          '⚡',
-};
-
 export default function EmergencyInput({ emergencyType, onChange, phase, emergencyLocation }) {
-  const isCustomType = !EMERGENCY_TYPES.slice(0, -1).includes(emergencyType);
+  const isPredefined = EMERGENCY_TYPES.slice(0, -1).some(t => t.id === emergencyType);
+  const isCustomType = !isPredefined;
   const [customText, setCustomText] = useState(isCustomType && emergencyType !== 'Other' ? emergencyType : '');
   const [showCustomInput, setShowCustomInput] = useState(isCustomType);
 
-  // Fall back to 'General' profile if emergencyType is custom or 'Other'
-  const profile = EMERGENCY_PROFILES[emergencyType] || EMERGENCY_PROFILES['General'];
-
-  const handleSelect = (type) => {
-    if (type === 'Other') {
+  const handleSelect = (typeId) => {
+    if (typeId === 'Other') {
       setShowCustomInput(true);
       onChange(customText.trim() ? customText.trim() : 'Other');
     } else {
       setShowCustomInput(false);
-      onChange(type);
+      onChange(typeId);
     }
   };
 
@@ -49,156 +36,77 @@ export default function EmergencyInput({ emergencyType, onChange, phase, emergen
     onChange(val.trim() ? val.trim() : 'Other');
   };
 
+  const isDisabled = phase === 'enroute' || phase === 'arrived';
+
   return (
-    <div style={{
-      background: 'linear-gradient(145deg, #071525 0%, #0a1e35 100%)',
-      border: '1px solid #0f3060',
-      borderRadius: 12,
-      padding: 14,
-      boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-    }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 10,
-      }}>
-        <div style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 10, color: '#4a7090',
-          letterSpacing: '0.15em',
-          fontWeight: 700,
-        }}>EMERGENCY NATURE</div>
-        <span style={{
-          fontSize: 9, fontFamily: 'var(--font-mono)',
-          color: '#00d4ff', background: 'rgba(0,212,255,0.1)',
-          padding: '1px 6px', borderRadius: 4,
-          border: '1px solid rgba(0,212,255,0.2)'
-        }}>AI CLASSIFIED</span>
+    <div className="bg-white dark:bg-[#10243A] rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 shadow-sm space-y-3">
+      {/* ── Section Title ───────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emergency" />
+          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+            Incident Classification
+          </span>
+        </div>
+        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+          AI Triage Matrix
+        </span>
       </div>
 
-      {/* Type selector: 3 columns grid for sleek presentation */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 5 }}>
+      {/* ── Grid of Incident Types ──────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-1.5">
         {EMERGENCY_TYPES.map(type => {
-          const isSelected = type === 'Other'
+          const isSelected = type.id === 'Other'
             ? (showCustomInput || emergencyType === 'Other')
-            : emergencyType === type;
-          const icon = EMERGENCY_ICONS[type] || '🏥';
+            : emergencyType === type.id;
+          const Icon = type.icon;
 
           return (
             <button
-              key={type}
-              onClick={() => handleSelect(type)}
-              disabled={phase === 'enroute' || phase === 'arrived'}
-              style={{
-                padding: '7px 4px',
-                borderRadius: 8,
-                border: isSelected ? '1px solid #00d4ff' : '1px solid #0f3060',
-                background: isSelected ? 'rgba(0,212,255,0.16)' : 'rgba(7,21,37,0.7)',
-                color: isSelected ? '#00d4ff' : '#6482a0',
-                fontFamily: 'var(--font-body)',
-                fontSize: 11, fontWeight: isSelected ? 700 : 500,
-                cursor: phase === 'enroute' || phase === 'arrived' ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-                boxShadow: isSelected ? '0 0 12px rgba(0,212,255,0.25)' : 'none',
-                opacity: phase === 'enroute' || phase === 'arrived' ? 0.6 : 1,
-              }}
+              key={type.id}
+              onClick={() => handleSelect(type.id)}
+              disabled={isDisabled}
+              className={`p-2 rounded-lg text-left transition-all border flex flex-col justify-between h-14 ${
+                isSelected
+                  ? 'bg-primary-50 dark:bg-slate-800 border-primary-500 dark:border-primary-400 text-primary-900 dark:text-slate-50 shadow-sm'
+                  : 'bg-slate-50/70 dark:bg-slate-900/40 border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
+              } ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
             >
-              <span style={{ fontSize: 15 }}>{icon}</span>
-              <span style={{
-                fontSize: 9, textAlign: 'center', lineHeight: 1.1,
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%'
-              }}>{type}</span>
+              <div className="flex items-center justify-between w-full">
+                <Icon size={14} className={isSelected ? 'text-emergency' : type.color} />
+                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emergency" />}
+              </div>
+              <span className="text-[11px] font-semibold truncate leading-tight">
+                {type.label}
+              </span>
             </button>
           );
         })}
       </div>
 
-      {/* Custom Emergency Input field if "Other" is chosen */}
+      {/* ── Custom Emergency Input ──────────────────────────────────── */}
       {showCustomInput && (
-        <div style={{ marginTop: 10, animation: 'fadeInUp 0.3s ease-out' }}>
-          <label style={{
-            display: 'block', fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: '#00d4ff', marginBottom: 4, letterSpacing: '0.05em'
-          }}>
-            Specify Custom Emergency Nature:
-          </label>
+        <div className="pt-1">
           <input
             type="text"
             value={customText}
             onChange={handleCustomChange}
-            placeholder="e.g. Chemical Spill, Building Collapse, Electric Shock..."
-            disabled={phase === 'enroute' || phase === 'arrived'}
-            style={{
-              width: '100%',
-              padding: '6px 10px',
-              borderRadius: 6,
-              background: '#040c18',
-              border: '1px solid #00d4ff66',
-              color: '#c8e0f4',
-              fontFamily: 'var(--font-body)',
-              fontSize: 11,
-              outline: 'none',
-              boxShadow: '0 0 8px rgba(0,212,255,0.15)',
-            }}
+            placeholder="Describe specific emergency nature..."
+            disabled={isDisabled}
+            className="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
       )}
 
-      {/* Severity badge */}
-      <div style={{
-        marginTop: 10,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '6px 10px',
-        background: `${profile.color}14`,
-        border: `1px solid ${profile.color}33`,
-        borderRadius: 8,
-      }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#4a7090' }}>
-          TRIAGE LEVEL
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} style={{
-              width: 7, height: 7, borderRadius: 2,
-              background: i < profile.severity ? profile.color : '#0f3060',
-              boxShadow: i < profile.severity ? `0 0 5px ${profile.color}90` : 'none',
-            }} />
-          ))}
-          <span style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 10, fontWeight: 700,
-            color: profile.color,
-            marginLeft: 4, letterSpacing: '0.08em',
-          }}>
-            {showCustomInput && customText ? customText.toUpperCase() : profile.label}
+      {/* ── Coordinates Status ──────────────────────────────────────── */}
+      {emergencyLocation && (
+        <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800/60">
+          <span>GPS Pin:</span>
+          <span className="font-semibold text-slate-700 dark:text-slate-300">
+            {emergencyLocation.lat?.toFixed(4)}, {emergencyLocation.lng?.toFixed(4)}
           </span>
         </div>
-      </div>
-
-      {/* Location status */}
-      <div style={{
-        marginTop: 8,
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '6px 10px',
-        background: emergencyLocation ? 'rgba(0,255,136,0.08)' : 'rgba(7,21,37,0.8)',
-        border: `1px solid ${emergencyLocation ? '#00ff8844' : '#0f3060'}`,
-        borderRadius: 8,
-      }}>
-        <div style={{
-          width: 6, height: 6, borderRadius: '50%',
-          background: emergencyLocation ? '#00ff88' : '#4a7090',
-          boxShadow: emergencyLocation ? '0 0 8px #00ff88' : 'none',
-        }} />
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 10,
-          color: emergencyLocation ? '#00ff88' : '#4a7090',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-        }}>
-          {emergencyLocation
-            ? `📍 ${emergencyLocation.lat.toFixed(4)}, ${emergencyLocation.lng.toFixed(4)}`
-            : 'Click map to set emergency pin'}
-        </span>
-      </div>
+      )}
     </div>
   );
 }

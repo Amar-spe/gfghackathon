@@ -1,124 +1,77 @@
 import React from 'react';
+import { CheckCircle2, Clock, MapPin, Ambulance, Hospital, Activity } from 'lucide-react';
 
-/**
- * DispatchTimeline
- * Shows a vertical timeline of the 5 fixed dispatch milestones.
- * Each step has: icon, label, timestamp (when done), and visual state.
- *
- * Props:
- *   steps  – array of { key, icon, label, time, done, active }
- *   phase  – current app phase (idle | located | enroute | arrived)
- */
 export default function DispatchTimeline({ steps = [], phase }) {
   if (!steps || steps.length === 0 || phase === 'idle') return null;
 
   return (
-    <div
-      className="card"
-      style={{
-        padding: '12px 14px',
-        background: 'var(--bg-card, #0f1a2e)',
-        borderRadius: 10,
-        border: '1px solid var(--color-border, #1e3a5f)',
-      }}
-    >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <span style={{ fontSize: 14 }}>⏱️</span>
-        <span
-          style={{
-            fontFamily: 'var(--font-display, monospace)',
-            fontSize: 10,
-            letterSpacing: '0.15em',
-            color: 'var(--color-accent-primary, #4fc3f7)',
-            textTransform: 'uppercase',
-          }}
-        >
-          DISPATCH TIMELINE
+    <div className="bg-white dark:bg-[#10243A] rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 shadow-sm space-y-3">
+      {/* ── Header ──────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+          Mission Milestones
+        </div>
+        <span className="text-[10px] font-mono font-medium text-slate-500">
+          5-Stage Telemetry
         </span>
       </div>
 
-      {/* Steps */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {/* ── Steps ───────────────────────────────────────────────────── */}
+      <div className="space-y-0 relative">
         {steps.map((step, idx) => {
+          const isDone = step.done;
+          const isActive = step.active;
           const isLast = idx === steps.length - 1;
+
           return (
-            <div key={step.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-              {/* Left column: icon + connector line */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 28, flexShrink: 0 }}>
-                {/* Step circle */}
+            <div key={step.key} className="flex items-start gap-3 relative pb-3">
+              {/* Connector line */}
+              {!isLast && (
                 <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: '50%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 13,
-                    flexShrink: 0,
-                    transition: 'all 0.3s ease',
-                    background: step.done
-                      ? 'rgba(34,197,94,0.18)'
-                      : step.active
-                        ? 'rgba(79,195,247,0.18)'
-                        : 'rgba(255,255,255,0.05)',
-                    border: step.done
-                      ? '1.5px solid #22c55e'
-                      : step.active
-                        ? '1.5px solid #4fc3f7'
-                        : '1.5px solid rgba(255,255,255,0.12)',
-                    boxShadow: step.active ? '0 0 8px rgba(79,195,247,0.4)' : 'none',
-                  }}
-                >
-                  {step.done ? '✓' : step.icon}
-                </div>
-                {/* Connector line */}
-                {!isLast && (
-                  <div
-                    style={{
-                      width: 2,
-                      flex: 1,
-                      minHeight: 16,
-                      background: step.done
-                        ? 'rgba(34,197,94,0.5)'
-                        : 'rgba(255,255,255,0.08)',
-                      transition: 'background 0.4s ease',
-                      margin: '2px 0',
-                    }}
-                  />
+                  className={`absolute left-3.5 top-6 bottom-0 w-0.5 ${
+                    isDone ? 'bg-teal' : 'bg-slate-200 dark:bg-slate-800'
+                  }`}
+                />
+              )}
+
+              {/* Step indicator node */}
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 z-10 transition-colors ${
+                  isDone
+                    ? 'bg-teal text-white'
+                    : isActive
+                    ? 'bg-primary-700 text-white dark:bg-primary-500 ring-2 ring-primary-300 dark:ring-primary-700'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+                }`}
+              >
+                {isDone ? (
+                  <CheckCircle2 size={14} />
+                ) : (
+                  <span className="text-xs font-mono font-bold">{idx + 1}</span>
                 )}
               </div>
 
-              {/* Right column: label + time */}
-              <div style={{ paddingTop: 4, paddingBottom: isLast ? 0 : 14, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: step.done || step.active ? 600 : 400,
-                    color: step.done
-                      ? '#22c55e'
-                      : step.active
-                        ? '#4fc3f7'
-                        : 'rgba(255,255,255,0.4)',
-                    transition: 'color 0.3s ease',
-                    lineHeight: 1.2,
-                  }}
-                >
-                  {step.label}
+              {/* Step details */}
+              <div className="flex-1 min-w-0 pt-0.5">
+                <div className="flex items-center justify-between">
+                  <span className={`text-xs font-bold ${
+                    isDone
+                      ? 'text-teal'
+                      : isActive
+                      ? 'text-slate-900 dark:text-slate-100'
+                      : 'text-slate-400 dark:text-slate-500'
+                  }`}>
+                    {step.label}
+                  </span>
+                  {step.time && (
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {step.time}
+                    </span>
+                  )}
                 </div>
-                {step.time && (
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: 'rgba(255,255,255,0.35)',
-                      marginTop: 2,
-                      fontFamily: 'monospace',
-                    }}
-                  >
-                    {step.time}
-                  </div>
-                )}
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                  {isDone ? 'Milestone Completed' : isActive ? 'Currently in Progress' : 'Pending Authorization'}
+                </div>
               </div>
             </div>
           );

@@ -24,53 +24,44 @@ function generateNearby(lat, lng, radiusKm) {
   };
 }
 
-// GET /api/ambulances?lat=12.97&lng=77.59&emergencyType=Accident&emergencyMode=false
 router.get('/', (req, res) => {
-  const { lat, lng, emergencyType = 'Accident', emergencyMode = 'false' } = req.query;
-
-  if (!lat || !lng) {
-    return res.status(400).json({ error: 'lat and lng are required query parameters' });
-  }
+  const { lat, lng, emergencyType = 'Accident', emergencyMode = 'false', hospitalId, hospitalName } = req.query;
+  if (!lat || !lng) return res.status(400).json({ error: 'lat and lng are required query parameters' });
 
   const centerLat = parseFloat(lat);
   const centerLng = parseFloat(lng);
-
-  if (isNaN(centerLat) || isNaN(centerLng)) {
-    return res.status(400).json({ error: 'lat and lng must be valid numbers' });
-  }
+  if (isNaN(centerLat) || isNaN(centerLng)) return res.status(400).json({ error: 'lat and lng must be valid numbers' });
 
   const trafficConditions = {};
   const trafficLevels = ['LOW', 'MEDIUM', 'HIGH'];
-  const trafficWeights = [0.4, 0.35, 0.25];
-
   const getTraffic = () => {
-    let r = Math.random(), sum = 0;
-    for (let i = 0; i < trafficWeights.length; i++) {
-      sum += trafficWeights[i];
-      if (r < sum) return trafficLevels[i];
-    }
-    return 'LOW';
+    const r = Math.random();
+    return r < 0.4 ? 'LOW' : r < 0.75 ? 'MEDIUM' : 'HIGH';
   };
 
   const statusChoices = ['available', 'available', 'available', 'busy', 'returning', 'maintenance'];
+  const count = hospitalId ? 4 : 6;
+  const prefix = hospitalName ? hospitalName.slice(0, 4).toUpperCase() : (hospitalId ? `H${hospitalId}` : 'AMB');
 
-  const ambulances = Array.from({ length: 6 }, (_, i) => {
-    const radiusKm = 0.5 + Math.random() * 2.5;
+  const ambulances = Array.from({ length: count }, (_, i) => {
+    const radiusKm = hospitalId ? (0.2 + Math.random() * 0.8) : (0.5 + Math.random() * 2.5);
     const pos = generateNearby(centerLat, centerLng, radiusKm);
     const spec = AMBULANCE_SPECS[i % AMBULANCE_SPECS.length];
     const status = statusChoices[i % statusChoices.length];
     const isStationary = status === 'busy' || status === 'maintenance';
 
     const ambulance = {
-      id: i + 1,
-      name: AMBULANCE_NAMES[i],
+      id: hospitalId ? (Number(hospitalId) * 10 + i + 1) : (i + 1),
+      hospitalId: hospitalId ? Number(hospitalId) : null,
+      hospitalName: hospitalName || null,
+      name: hospitalId ? `${prefix}-${spec.equipmentType}-${String(i + 1).padStart(2, '0')}` : AMBULANCE_NAMES[i],
       lat: pos.lat,
       lng: pos.lng,
       equipment: 65 + Math.floor(Math.random() * 35),
       status,
       type: spec.type,
       equipmentType: spec.equipmentType,
-      driver: DRIVER_NAMES[i],
+      driver: DRIVER_NAMES[i % DRIVER_NAMES.length],
       crewSize: 2 + Math.floor(Math.random() * 2),
       speed: isStationary ? 0 : 35 + Math.floor(Math.random() * 25),
       contact: `+91-98${Math.floor(1000000 + Math.random() * 8999999)}`
@@ -79,15 +70,13 @@ router.get('/', (req, res) => {
     return ambulance;
   });
 
-  // Score all ambulances considering emergency type and traffic
   const emergencyLoc = { lat: centerLat, lng: centerLng };
   const isEmergencyMode = emergencyMode === 'true';
 
-  const scoredAmbulances = ambulances.map(amb => {
-    const scoring = scoreAmbulance(amb, emergencyLoc, trafficConditions, isEmergencyMode, emergencyType);
-    return { ...amb, ...scoring };
-  }).sort((a, b) => {
-    // Available units ALWAYS rank ahead of non-available units
+  const scoredAmbulances = ambulances.map(amb => ({
+    ...amb,
+    ...scoreAmbulance(amb, emergencyLoc, trafficConditions, isEmergencyMode, emergencyType)
+  })).sort((a, b) => {
     const aAvail = a.status === 'available';
     const bAvail = b.status === 'available';
     if (aAvail && !bAvail) return -1;
@@ -95,7 +84,6 @@ router.get('/', (req, res) => {
     return b.score - a.score;
   });
 
-  // Never designate a busy or maintenance unit as bestAmbulanceId
   const bestAvailable = scoredAmbulances.find(a => a.status === 'available') || null;
 
   res.json({
@@ -103,7 +91,21 @@ router.get('/', (req, res) => {
     trafficConditions,
     bestAmbulanceId: bestAvailable ? bestAvailable.id : null,
     emergencyType,
+    hospitalId: hospitalId ? Number(hospitalId) : null,
     generatedAt: new Date().toISOString()
+  });
+});
+
+router.patch('/:id', (req, res) => {
+  const { id } = req.params;
+  const { status = 'available', driver, paramedic } = req.body;
+  res.json({
+    success: true,
+    ambulanceId: Number(id),
+    status,
+    driver,
+    paramedic,
+    updatedAt: new Date().toISOString()
   });
 });
 

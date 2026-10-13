@@ -1,6 +1,6 @@
 // LifeLine AI - Hospital Data
 // Note: Static hospital data has been removed. All hospital facilities are dynamically 
-// fetched from OpenStreetMap (via backend API /api/hospitals/nearby).
+// fetched from Ola Maps facility network (via backend API /api/hospitals/nearby).
 
 export const HOSPITALS = [];
 

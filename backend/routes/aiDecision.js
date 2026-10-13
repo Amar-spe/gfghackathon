@@ -9,8 +9,6 @@ const {
 } = require('../utils/aiEngine');
 const fallbackHospitals = require('../data/hospitals.json');
 
-// POST /api/ai-decision
-// Full AI decision: selects best available ambulance + ranks hospitals based on emergency type
 router.post('/', (req, res) => {
   const {
     emergencyLocation,
@@ -22,17 +20,13 @@ router.post('/', (req, res) => {
   } = req.body;
 
   if (!emergencyLocation || typeof emergencyLocation.lat !== 'number' || typeof emergencyLocation.lng !== 'number') {
-    return res.status(400).json({
-      error: 'Invalid request: emergencyLocation with valid numeric lat and lng is required'
-    });
+    return res.status(400).json({ error: 'Invalid request: emergencyLocation with valid numeric lat and lng is required' });
   }
 
-  // Score ambulances
-  const scoredAmbulances = (Array.isArray(ambulances) ? ambulances : []).map(amb => {
-    const scoring = scoreAmbulance(amb, emergencyLocation, trafficConditions, emergencyMode, emergencyType);
-    return { ...amb, ...scoring };
-  }).sort((a, b) => {
-    // Available units ALWAYS rank ahead of non-available units
+  const scoredAmbulances = (Array.isArray(ambulances) ? ambulances : []).map(amb => ({
+    ...amb,
+    ...scoreAmbulance(amb, emergencyLocation, trafficConditions, emergencyMode, emergencyType)
+  })).sort((a, b) => {
     const aAvail = a.status === 'available';
     const bAvail = b.status === 'available';
     if (aAvail && !bAvail) return -1;
@@ -40,33 +34,25 @@ router.post('/', (req, res) => {
     return b.score - a.score;
   });
 
-  // Use provided dynamic hospitals or fallback to static list
-  const targetHospitals = (Array.isArray(inputHospitals) && inputHospitals.length > 0)
-    ? inputHospitals
-    : fallbackHospitals;
+  const targetHospitals = (Array.isArray(inputHospitals) && inputHospitals.length > 0) ? inputHospitals : fallbackHospitals;
 
-  // Score hospitals
-  const scoredHospitals = targetHospitals.map(h => {
-    const scoring = scoreHospital(h, emergencyLocation, emergencyType, trafficConditions, emergencyMode);
-    return { ...h, ...scoring };
-  }).sort((a, b) => b.score - a.score);
+  const scoredHospitals = targetHospitals.map(h => ({
+    ...h,
+    ...scoreHospital(h, emergencyLocation, emergencyType, trafficConditions, emergencyMode)
+  })).sort((a, b) => b.score - a.score);
 
-  // Attach contextual recommendation reasons with awareness of all ranked hospitals
   const scoredWithReasons = scoredHospitals.map(h => ({
     ...h,
     reasons: getRecommendationReasons(h, emergencyType, scoredHospitals)
   }));
 
-  // Never pick a busy or maintenance ambulance as the recommended unit
   const bestAmbulance = scoredAmbulances.find(a => a.status === 'available') || null;
   const bestHospital = scoredWithReasons[0] || null;
 
-  // Estimated total transit ETA
   const totalTime = bestAmbulance
     ? (bestAmbulance.estimatedArrival || 0) + (bestHospital?.estimatedTime || 5)
     : (bestHospital?.estimatedTime || 10);
 
-  // Clinical dispatch urgency evaluation (replaces unvalidated survival prediction)
   const urgencyAssessment = getDispatchUrgencyAssessment(totalTime, emergencyType);
 
   res.json({
@@ -76,7 +62,7 @@ router.post('/', (req, res) => {
       recommendedHospital: bestHospital,
       rankedHospitals: scoredWithReasons.slice(0, 3),
       estimatedTotalETA: Math.round(totalTime * 10) / 10,
-      survivalProbability: calculateSurvivalProbability(), // Disabled per clinical safety policy
+      survivalProbability: calculateSurvivalProbability(),
       urgencyAssessment,
       emergencyMode,
       reasoning: {

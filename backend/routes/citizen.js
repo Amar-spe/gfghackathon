@@ -1,78 +1,17 @@
-/**
- * ============================================================================
- * LIFELINE AI - CITIZEN RESCUE IMPACT POINTS API & VERIFICATION ENGINE
- * ============================================================================
- * 
- * CRITICAL SAFETY & ETHICAL CONSTRAINTS (MANDATORY SYSTEM DIRECTIVES):
- * 1. NEVER award points based on patient survival, recovery, or clinical outcomes.
- *    Civic volunteers and citizens must NEVER be incentivized or evaluated based
- *    on medical results, patient survival, or clinical triage outcomes. Points
- *    are awarded SOLELY for timely, verified logistical accuracy and civic coordination.
- * 
- * 2. Dispatch priority must ALWAYS remain strictly based on emergency need, severity,
- *    and clinical protocols, completely isolated from this community reward system.
- * 
- * 3. Hospital verification is required BEFORE any points are credited. Points are
- *    awarded only after a designated Hospital User (Triage / Receiving Staff)
- *    explicitly verifies patient handover and confirms report validity upon arrival.
- * 
- * 4. Point values are NEVER hardcoded in the frontend. All reward rules and multipliers
- *    are dynamically served via the /api/citizen/config endpoint.
- * ============================================================================
- */
-
 const express = require('express');
 const router = express.Router();
 
-// ── Dynamic Reward Configuration (Fetched by Frontend State Store) ──────────
 const DYNAMIC_POINTS_CONFIG = {
   version: '2026.4.1',
   currencyName: 'Rescue Impact Points',
   currencySymbol: 'RIP',
   rules: {
-    VALID_INCIDENT_REPORT: {
-      actionKey: 'VALID_INCIDENT_REPORT',
-      label: 'Valid Incident Report',
-      points: 10,
-      description: 'Accurate initial reporting of an emergency incident verified upon ambulance dispatch/intake.',
-      category: 'Reporting'
-    },
-    VERIFIED_LOCATION_CORRECTION: {
-      actionKey: 'VERIFIED_LOCATION_CORRECTION',
-      label: 'Verified Location Correction',
-      points: 5,
-      description: 'Accurate pinpointing, gate access, or obstruction update that shortened responder travel.',
-      category: 'Navigation'
-    },
-    CONFIRMED_AUTHORIZED_RESPONDER_TASK: {
-      actionKey: 'CONFIRMED_AUTHORIZED_RESPONDER_TASK',
-      label: 'Confirmed Authorized Responder Task',
-      points: 20,
-      description: 'Paramedic or hospital-authorized civic task (e.g., clearing stretcher path, AED guide).',
-      category: 'Field Assist'
-    },
-    SUCCESSFUL_EMERGENCY_LOGISTICS_TASK: {
-      actionKey: 'SUCCESSFUL_EMERGENCY_LOGISTICS_TASK',
-      label: 'Emergency Logistics Task',
-      points: 15,
-      description: 'Relayed emergency supplies, opened perimeter access, or coordinated civilian crowd barrier.',
-      category: 'Logistics'
-    },
-    DUPLICATE_UNVERIFIED_REPORT: {
-      actionKey: 'DUPLICATE_UNVERIFIED_REPORT',
-      label: 'Duplicate / Unverified Report',
-      points: 0,
-      description: 'Report matched an active incident or could not be verified by hospital intake.',
-      category: 'Duplicate'
-    },
-    FRAUDULENT_REPORT: {
-      actionKey: 'FRAUDULENT_REPORT',
-      label: 'Fraudulent / Malicious Report',
-      points: 0,
-      triggersRestriction: true,
-      description: 'Fabricated or prank incident report detected by emergency intake. Account restricted.',
-      category: 'Anti-Abuse'
-    }
+    VALID_INCIDENT_REPORT: { actionKey: 'VALID_INCIDENT_REPORT', label: 'Valid Incident Report', points: 10, description: 'Accurate initial reporting of an emergency incident verified upon ambulance dispatch/intake.', category: 'Reporting' },
+    VERIFIED_LOCATION_CORRECTION: { actionKey: 'VERIFIED_LOCATION_CORRECTION', label: 'Verified Location Correction', points: 5, description: 'Accurate pinpointing, gate access, or obstruction update that shortened responder travel.', category: 'Navigation' },
+    CONFIRMED_AUTHORIZED_RESPONDER_TASK: { actionKey: 'CONFIRMED_AUTHORIZED_RESPONDER_TASK', label: 'Confirmed Authorized Responder Task', points: 20, description: 'Paramedic or hospital-authorized civic task (e.g., clearing stretcher path, AED guide).', category: 'Field Assist' },
+    SUCCESSFUL_EMERGENCY_LOGISTICS_TASK: { actionKey: 'SUCCESSFUL_EMERGENCY_LOGISTICS_TASK', label: 'Emergency Logistics Task', points: 15, description: 'Relayed emergency supplies, opened perimeter access, or coordinated civilian crowd barrier.', category: 'Logistics' },
+    DUPLICATE_UNVERIFIED_REPORT: { actionKey: 'DUPLICATE_UNVERIFIED_REPORT', label: 'Duplicate / Unverified Report', points: 0, description: 'Report matched an active incident or could not be verified by hospital intake.', category: 'Duplicate' },
+    FRAUDULENT_REPORT: { actionKey: 'FRAUDULENT_REPORT', label: 'Fraudulent / Malicious Report', points: 0, triggersRestriction: true, description: 'Fabricated or prank incident report detected by emergency intake. Account restricted.', category: 'Anti-Abuse' }
   },
   antiAbuseRules: {
     maxReportsPerHour: 3,
@@ -85,9 +24,7 @@ const DYNAMIC_POINTS_CONFIG = {
   ethicalDisclaimer: 'Outcomes depend strictly on clinical emergency factors. Dispatch priority and medical care are 100% isolated from citizen reward points. Points are never awarded for clinical survival.'
 };
 
-// ── In-Memory State Store (Mock State with Dynamic Verification Lifecycle) ──
 let state = {
-  // Current active citizen user profile
   activeCitizen: {
     citizenId: 'CIT-8492',
     fullName: 'Aarav Sharma',
@@ -98,22 +35,18 @@ let state = {
     joinedDate: '2025-11-14',
     totalPoints: 85,
     verifiedContributions: 6,
-    accountStatus: 'Good Standing', // 'Good Standing' | 'Under Review' | 'Restricted'
-    restrictionFlag: null, // e.g. { reason, timestamp, appealStatus }
+    accountStatus: 'Good Standing',
+    restrictionFlag: null,
     hourlyReportsSubmitted: 1,
     dailyReportsSubmitted: 2,
     cooldownUntil: null
   },
-
-  // Hospital & Receiving Facility Verifiers
   availableHospitals: [
     { id: 'HOSP-01', name: 'Victoria Hospital ER', admin: 'Dr. Aris Thorne (Chief Triage Officer)', badge: 'Level 1 Trauma' },
     { id: 'HOSP-02', name: 'Bowring & Lady Curzon Hospital', admin: 'Dr. Kavita Menon (Head of Emergency)', badge: 'Multi-Specialty' },
     { id: 'HOSP-03', name: 'Manipal Hospital HAL', admin: 'Dr. Rajesh Rao (Lead ER Registrar)', badge: 'Cardiac & Neuro' },
     { id: 'HOSP-04', name: 'Apollo Hospitals Bannerghatta', admin: 'Dr. Neha Swaminathan (Clinical Director)', badge: 'Super-Specialty' }
   ],
-
-  // Incoming reports awaiting explicit verification by a hospital upon patient arrival
   pendingVerifications: [
     {
       reportId: 'REP-9021',
@@ -180,8 +113,6 @@ let state = {
       status: 'AWAITING_HOSPITAL_VERIFICATION'
     }
   ],
-
-  // Immutable Audit History of verified rewards
   auditHistory: [
     {
       id: 'AUD-7701',
@@ -289,129 +220,19 @@ let state = {
       notes: 'Confirmed accurate triage details.'
     }
   ],
-
-  // Recognition Badges with unlock requirements
   badges: [
-    {
-      id: 'badge-verified-reporter',
-      title: 'Verified Reporter',
-      tier: 'Gold',
-      icon: '🛡️',
-      color: '#00d4ff',
-      description: 'Submitted 5+ emergency reports verified as accurate by hospital ER triage.',
-      requiredCount: 5,
-      currentCount: 6,
-      isUnlocked: true,
-      unlockedAt: '2026-10-05T19:05:45.000Z'
-    },
-    {
-      id: 'badge-community-helper',
-      title: 'Community Helper',
-      tier: 'Silver',
-      icon: '🤝',
-      color: '#00ff88',
-      description: 'Completed 5+ verified location corrections or civic clearance assists.',
-      requiredCount: 5,
-      currentCount: 4,
-      isUnlocked: false,
-      unlockedAt: null
-    },
-    {
-      id: 'badge-responder-partner',
-      title: 'Responder Partner',
-      tier: 'Platinum',
-      icon: '⭐',
-      color: '#ffa500',
-      description: 'Accomplished 3+ paramedic or hospital-authorized active field tasks.',
-      requiredCount: 3,
-      currentCount: 3,
-      isUnlocked: true,
-      unlockedAt: '2026-10-09T08:14:22.000Z'
-    },
-    {
-      id: 'badge-logistics-vanguard',
-      title: 'Logistics Vanguard',
-      tier: 'Master',
-      icon: '📦',
-      color: '#a855f7',
-      description: 'Coordinated 3+ verified medical logistics or pathway clearance operations.',
-      requiredCount: 3,
-      currentCount: 2,
-      isUnlocked: false,
-      unlockedAt: null
-    }
+    { id: 'badge-verified-reporter', title: 'Verified Reporter', tier: 'Gold', color: '#0d9488', description: 'Submitted 5+ emergency reports verified as accurate by hospital ER triage.', requiredCount: 5, currentCount: 6, isUnlocked: true, unlockedAt: '2026-10-05T19:05:45.000Z' },
+    { id: 'badge-community-helper', title: 'Community Helper', tier: 'Silver', color: '#0d9488', description: 'Completed 5+ verified location corrections or civic clearance assists.', requiredCount: 5, currentCount: 4, isUnlocked: false, unlockedAt: null },
+    { id: 'badge-responder-partner', title: 'Responder Partner', tier: 'Platinum', color: '#d97706', description: 'Accomplished 3+ paramedic or hospital-authorized active field tasks.', requiredCount: 3, currentCount: 3, isUnlocked: true, unlockedAt: '2026-10-09T08:14:22.000Z' },
+    { id: 'badge-logistics-vanguard', title: 'Logistics Vanguard', tier: 'Master', color: '#3b82f6', description: 'Coordinated 3+ verified medical logistics or pathway clearance operations.', requiredCount: 3, currentCount: 2, isUnlocked: false, unlockedAt: null }
   ],
-
-  // Community Leaderboard (Weekly)
   leaderboard: [
-    {
-      rank: 1,
-      userId: 'CIT-8492',
-      name: 'Aarav Sharma',
-      handle: '@aarav_rescue',
-      zone: 'Koramangala, Bengaluru',
-      verifiedPoints: 85,
-      verifiedCount: 6,
-      avatar: '👨‍💼',
-      badge: 'Responder Partner',
-      isCurrentUser: true,
-      trend: '▲ (+15 pts this week)'
-    },
-    {
-      rank: 2,
-      userId: 'CIT-7104',
-      name: 'Dr. Priya Patel',
-      handle: '@priya_cpr',
-      zone: 'Indiranagar, Bengaluru',
-      verifiedPoints: 75,
-      verifiedCount: 5,
-      avatar: '👩‍⚕️',
-      badge: 'Verified Reporter',
-      isCurrentUser: false,
-      trend: '▲ (+10 pts this week)'
-    },
-    {
-      rank: 3,
-      userId: 'CIT-6321',
-      name: 'Rahul Venkat',
-      handle: '@rahul_v_firstaid',
-      zone: 'Whitefield, Bengaluru',
-      verifiedPoints: 65,
-      verifiedCount: 5,
-      avatar: '👨‍🔧',
-      badge: 'Community Helper',
-      isCurrentUser: false,
-      trend: '▼ (0 pts this week)'
-    },
-    {
-      rank: 4,
-      userId: 'CIT-9182',
-      name: 'Ananya Deshmukh',
-      handle: '@ananya_dispatch',
-      zone: 'Jayanagar, Bengaluru',
-      verifiedPoints: 50,
-      verifiedCount: 4,
-      avatar: '👩‍💻',
-      badge: 'Verified Reporter',
-      isCurrentUser: false,
-      trend: '▲ (+10 pts this week)'
-    },
-    {
-      rank: 5,
-      userId: 'CIT-5049',
-      name: 'Karthik Subbaraj',
-      handle: '@karthik_swift',
-      zone: 'Electronic City, Bengaluru',
-      verifiedPoints: 45,
-      verifiedCount: 3,
-      avatar: '👨‍🚒',
-      badge: 'Responder Partner',
-      isCurrentUser: false,
-      trend: '▲ (+5 pts this week)'
-    }
+    { rank: 1, userId: 'CIT-8492', name: 'Aarav Sharma', handle: '@aarav_rescue', zone: 'Koramangala, Bengaluru', verifiedPoints: 85, verifiedCount: 6, badge: 'Responder Partner', isCurrentUser: true, trend: '+15 pts this week' },
+    { rank: 2, userId: 'CIT-7104', name: 'Dr. Priya Patel', handle: '@priya_cpr', zone: 'Indiranagar, Bengaluru', verifiedPoints: 75, verifiedCount: 5, badge: 'Verified Reporter', isCurrentUser: false, trend: '+10 pts this week' },
+    { rank: 3, userId: 'CIT-6321', name: 'Rahul Venkat', handle: '@rahul_v_firstaid', zone: 'Whitefield, Bengaluru', verifiedPoints: 65, verifiedCount: 5, badge: 'Community Helper', isCurrentUser: false, trend: '0 pts this week' },
+    { rank: 4, userId: 'CIT-9182', name: 'Ananya Deshmukh', handle: '@ananya_dispatch', zone: 'Jayanagar, Bengaluru', verifiedPoints: 50, verifiedCount: 4, badge: 'Verified Reporter', isCurrentUser: false, trend: '+10 pts this week' },
+    { rank: 5, userId: 'CIT-5049', name: 'Karthik Subbaraj', handle: '@karthik_swift', zone: 'Electronic City, Bengaluru', verifiedPoints: 45, verifiedCount: 3, badge: 'Responder Partner', isCurrentUser: false, trend: '+5 pts this week' }
   ],
-
-  // Area & Organization Aggregate Contributions
   areaAggregates: [
     { area: 'Koramangala', verifiedAssists: 142, pointsGenerated: 1840, activeVolunteers: 64, avgVerifyTimeMin: 4.2 },
     { area: 'Indiranagar', verifiedAssists: 118, pointsGenerated: 1520, activeVolunteers: 52, avgVerifyTimeMin: 3.8 },
@@ -420,91 +241,35 @@ let state = {
     { area: 'Electronic City', verifiedAssists: 72, pointsGenerated: 940, activeVolunteers: 29, avgVerifyTimeMin: 6.0 },
     { area: 'Central MG Road', verifiedAssists: 68, pointsGenerated: 890, activeVolunteers: 25, avgVerifyTimeMin: 3.5 }
   ],
-
   organizationAggregates: [
     { org: 'Community First Responders', members: 128, verifiedPoints: 3420, verifiedTasks: 210, badge: 'Lead Partner' },
     { org: 'Red Cross Youth Brigade', members: 84, verifiedPoints: 2150, verifiedTasks: 145, badge: 'Certified Corps' },
     { org: 'St. John Ambulance Volunteers', members: 62, verifiedPoints: 1680, verifiedTasks: 112, badge: 'Civic Escort' },
     { org: 'Bangalore Civil Defense Volunteers', members: 50, verifiedPoints: 1290, verifiedTasks: 88, badge: 'Urban Shield' }
   ],
-
-  // Anti-Abuse Alerts & Geofenced Duplicates
   antiAbuseEvents: [
-    {
-      id: 'AAB-101',
-      type: 'RATE_LIMIT_CHECK',
-      status: 'NORMAL',
-      detail: '1 of 3 hourly incident reporting limit consumed. Good standing maintained.',
-      timestamp: new Date().toISOString()
-    },
-    {
-      id: 'AAB-102',
-      type: 'GEOFENCE_SIMILARITY',
-      status: 'CLEAR',
-      detail: 'No duplicate incidents found within 150m radius of recent reporting location.',
-      timestamp: new Date().toISOString()
-    }
+    { id: 'AAB-101', type: 'RATE_LIMIT_CHECK', status: 'NORMAL', detail: '1 of 3 hourly incident reporting limit consumed. Good standing maintained.', timestamp: new Date().toISOString() },
+    { id: 'AAB-102', type: 'GEOFENCE_SIMILARITY', status: 'CLEAR', detail: 'No duplicate incidents found within 150m radius of recent reporting location.', timestamp: new Date().toISOString() }
   ],
-
-  // Appeals submitted by restricted accounts
   appeals: []
 };
 
-// ── Helper to re-evaluate badges when points/contributions change ────────────
 function updateCitizenBadges() {
   const verifiedCount = state.activeCitizen.verifiedContributions;
-  const verifiedTasks = state.auditHistory.filter(
-    h => h.actionKey === 'CONFIRMED_AUTHORIZED_RESPONDER_TASK' && h.verificationStatus === 'VERIFIED_VALID'
-  ).length;
-  const locationCorrections = state.auditHistory.filter(
-    h => h.actionKey === 'VERIFIED_LOCATION_CORRECTION' && h.verificationStatus === 'VERIFIED_VALID'
-  ).length;
-  const logisticsTasks = state.auditHistory.filter(
-    h => h.actionKey === 'SUCCESSFUL_EMERGENCY_LOGISTICS_TASK' && h.verificationStatus === 'VERIFIED_VALID'
-  ).length;
+  const verifiedTasks = state.auditHistory.filter(h => h.actionKey === 'CONFIRMED_AUTHORIZED_RESPONDER_TASK' && h.verificationStatus === 'VERIFIED_VALID').length;
+  const locationCorrections = state.auditHistory.filter(h => h.actionKey === 'VERIFIED_LOCATION_CORRECTION' && h.verificationStatus === 'VERIFIED_VALID').length;
+  const logisticsTasks = state.auditHistory.filter(h => h.actionKey === 'SUCCESSFUL_EMERGENCY_LOGISTICS_TASK' && h.verificationStatus === 'VERIFIED_VALID').length;
 
   state.badges = state.badges.map(b => {
-    if (b.id === 'badge-verified-reporter') {
-      const unlocked = verifiedCount >= b.requiredCount;
-      return {
-        ...b,
-        currentCount: verifiedCount,
-        isUnlocked: unlocked,
-        unlockedAt: unlocked ? (b.unlockedAt || new Date().toISOString()) : null
-      };
-    }
-    if (b.id === 'badge-community-helper') {
-      const total = locationCorrections + verifiedTasks;
-      const unlocked = total >= b.requiredCount;
-      return {
-        ...b,
-        currentCount: total,
-        isUnlocked: unlocked,
-        unlockedAt: unlocked ? (b.unlockedAt || new Date().toISOString()) : null
-      };
-    }
-    if (b.id === 'badge-responder-partner') {
-      const unlocked = verifiedTasks >= b.requiredCount;
-      return {
-        ...b,
-        currentCount: verifiedTasks,
-        isUnlocked: unlocked,
-        unlockedAt: unlocked ? (b.unlockedAt || new Date().toISOString()) : null
-      };
-    }
-    if (b.id === 'badge-logistics-vanguard') {
-      const unlocked = logisticsTasks >= b.requiredCount;
-      return {
-        ...b,
-        currentCount: logisticsTasks,
-        isUnlocked: unlocked,
-        unlockedAt: unlocked ? (b.unlockedAt || new Date().toISOString()) : null
-      };
-    }
-    return b;
+    let unlocked = false;
+    let count = 0;
+    if (b.id === 'badge-verified-reporter') { count = verifiedCount; unlocked = count >= b.requiredCount; }
+    else if (b.id === 'badge-community-helper') { count = locationCorrections + verifiedTasks; unlocked = count >= b.requiredCount; }
+    else if (b.id === 'badge-responder-partner') { count = verifiedTasks; unlocked = count >= b.requiredCount; }
+    else if (b.id === 'badge-logistics-vanguard') { count = logisticsTasks; unlocked = count >= b.requiredCount; }
+    return { ...b, currentCount: count, isUnlocked: unlocked, unlockedAt: unlocked ? (b.unlockedAt || new Date().toISOString()) : null };
   });
 
-  // Update leaderboard current user entry
   const userEntry = state.leaderboard.find(u => u.isCurrentUser);
   if (userEntry) {
     userEntry.verifiedPoints = state.activeCitizen.totalPoints;
@@ -514,18 +279,10 @@ function updateCitizenBadges() {
   }
 }
 
-// ── GET /api/citizen/config ──────────────────────────────────────────────────
-// Returns dynamic point values and ethical safety configuration. NO HARDCODING.
 router.get('/config', (req, res) => {
-  res.json({
-    success: true,
-    data: DYNAMIC_POINTS_CONFIG,
-    timestamp: new Date().toISOString()
-  });
+  res.json({ success: true, data: DYNAMIC_POINTS_CONFIG, timestamp: new Date().toISOString() });
 });
 
-// ── GET /api/citizen/profile ─────────────────────────────────────────────────
-// Returns active citizen profile, points, status, badges, and anti-abuse limits
 router.get('/profile', (req, res) => {
   res.json({
     success: true,
@@ -544,8 +301,6 @@ router.get('/profile', (req, res) => {
   });
 });
 
-// ── GET /api/citizen/leaderboard ─────────────────────────────────────────────
-// Returns weekly top users, zone aggregates, and organization aggregates
 router.get('/leaderboard', (req, res) => {
   res.json({
     success: true,
@@ -558,8 +313,6 @@ router.get('/leaderboard', (req, res) => {
   });
 });
 
-// ── GET /api/citizen/audit-history ───────────────────────────────────────────
-// Returns complete, immutable audit trail of how points were verified & credited
 router.get('/audit-history', (req, res) => {
   res.json({
     success: true,
@@ -571,8 +324,6 @@ router.get('/audit-history', (req, res) => {
   });
 });
 
-// ── GET /api/citizen/pending-verifications ───────────────────────────────────
-// Returns incoming community reports waiting for Hospital ER intake verification
 router.get('/pending-verifications', (req, res) => {
   res.json({
     success: true,
@@ -584,30 +335,10 @@ router.get('/pending-verifications', (req, res) => {
   });
 });
 
-// ── POST /api/citizen/verify-report ──────────────────────────────────────────
-/**
- * CORE HOSPITAL VERIFICATION ENDPOINT
- * 
- * Points are ONLY awarded after a "Hospital" user explicitly verifies
- * that the patient report is valid upon receiving the patient in the ER.
- * 
- * Verification outcomes:
- * 1. 'VERIFY_VALID':
- *    - Looks up point rule dynamically from DYNAMIC_POINTS_CONFIG (No Hardcoding!).
- *    - Adds points to citizen account.
- *    - Creates signed audit record with hospital verifier, timestamp, and notes.
- * 2. 'MARK_DUPLICATE':
- *    - Awards 0 points.
- *    - Logs duplicate warning in audit history.
- * 3. 'FLAG_FRAUDULENT':
- *    - 0 points awarded.
- *    - Triggers account review/restriction flag on the citizen account.
- *    - Logs anti-abuse penalty event.
- */
 router.post('/verify-report', (req, res) => {
   const {
     reportId,
-    verificationResult, // 'VERIFY_VALID' | 'MARK_DUPLICATE' | 'FLAG_FRAUDULENT'
+    verificationResult,
     verifierName = 'Dr. Aris Thorne (Chief Triage Officer)',
     verifierRole = 'Hospital Emergency Intake Staff',
     hospitalName = 'Victoria Hospital ER',
@@ -615,21 +346,14 @@ router.post('/verify-report', (req, res) => {
   } = req.body;
 
   if (!reportId || !verificationResult) {
-    return res.status(400).json({
-      success: false,
-      error: 'Missing required fields: reportId and verificationResult are mandatory.'
-    });
+    return res.status(400).json({ success: false, error: 'Missing required fields: reportId and verificationResult are mandatory.' });
   }
 
-  // Find the pending report
   const reportIndex = state.pendingVerifications.findIndex(r => r.reportId === reportId);
   const report = reportIndex !== -1 ? state.pendingVerifications[reportIndex] : null;
 
   if (!report) {
-    return res.status(404).json({
-      success: false,
-      error: `Report ${reportId} not found in pending intake verification queue.`
-    });
+    return res.status(404).json({ success: false, error: `Report ${reportId} not found in pending intake verification queue.` });
   }
 
   const now = new Date().toISOString();
@@ -637,20 +361,15 @@ router.post('/verify-report', (req, res) => {
   let statusMessage = '';
   let auditStatus = '';
 
-  // 1. Valid Verification
   if (verificationResult === 'VERIFY_VALID') {
-    // Dynamic point lookup from backend config — strictly no frontend hardcoding
     const rule = DYNAMIC_POINTS_CONFIG.rules[report.actionKey] || DYNAMIC_POINTS_CONFIG.rules.VALID_INCIDENT_REPORT;
     pointsAwarded = rule.points;
     auditStatus = 'VERIFIED_VALID';
-
-    // Award points ONLY to citizen upon hospital arrival verification
     state.activeCitizen.totalPoints += pointsAwarded;
     state.activeCitizen.verifiedContributions += 1;
     statusMessage = `Hospital triage verified report. Awarded +${pointsAwarded} Rescue Impact Points dynamically.`;
 
-    // Create Audit History record
-    const auditRecord = {
+    state.auditHistory.unshift({
       id: `AUD-${Date.now().toString().slice(-4)}`,
       reportId: report.reportId,
       citizenId: report.citizenId,
@@ -664,19 +383,15 @@ router.post('/verify-report', (req, res) => {
       hospital: hospitalName,
       timestamp: now,
       notes: notes || `Hospital ER confirmed patient intake. Logistical report verified accurate by ${verifierRole}.`
-    };
-    state.auditHistory.unshift(auditRecord);
-
-    // Re-evaluate badge progress
+    });
     updateCitizenBadges();
 
-  // 2. Duplicate / Unverified
   } else if (verificationResult === 'MARK_DUPLICATE') {
     pointsAwarded = 0;
     auditStatus = 'DUPLICATE_UNVERIFIED';
     statusMessage = 'Report matched an existing active incident. 0 points awarded per anti-duplicate policy.';
 
-    const auditRecord = {
+    state.auditHistory.unshift({
       id: `AUD-${Date.now().toString().slice(-4)}`,
       reportId: report.reportId,
       citizenId: report.citizenId,
@@ -690,16 +405,13 @@ router.post('/verify-report', (req, res) => {
       hospital: hospitalName,
       timestamp: now,
       notes: notes || 'Hospital verification determined report was redundant to an existing active dispatch.'
-    };
-    state.auditHistory.unshift(auditRecord);
+    });
 
-  // 3. Fraudulent Report -> Triggers Account Restriction Flag
   } else if (verificationResult === 'FLAG_FRAUDULENT') {
     pointsAwarded = 0;
     auditStatus = 'FRAUDULENT_FLAGGED';
     statusMessage = 'Fraudulent incident report flagged by Hospital ER. Citizen account restricted for oversight review.';
 
-    // Flag account as restricted
     state.activeCitizen.accountStatus = 'Restricted';
     state.activeCitizen.restrictionFlag = {
       flaggedBy: verifierName,
@@ -710,7 +422,7 @@ router.post('/verify-report', (req, res) => {
       appealStatus: 'PENDING_CITIZEN_SUBMISSION'
     };
 
-    const auditRecord = {
+    state.auditHistory.unshift({
       id: `AUD-${Date.now().toString().slice(-4)}`,
       reportId: report.reportId,
       citizenId: report.citizenId,
@@ -724,8 +436,7 @@ router.post('/verify-report', (req, res) => {
       hospital: hospitalName,
       timestamp: now,
       notes: `CRITICAL ANTI-ABUSE: ${notes || 'Malicious report detected. Account flagged for review.'}`
-    };
-    state.auditHistory.unshift(auditRecord);
+    });
 
     state.antiAbuseEvents.unshift({
       id: `AAB-${Date.now().toString().slice(-3)}`,
@@ -735,13 +446,9 @@ router.post('/verify-report', (req, res) => {
       timestamp: now
     });
   } else {
-    return res.status(400).json({
-      success: false,
-      error: `Invalid verificationResult '${verificationResult}'. Must be VERIFY_VALID, MARK_DUPLICATE, or FLAG_FRAUDULENT.`
-    });
+    return res.status(400).json({ success: false, error: `Invalid verificationResult '${verificationResult}'. Must be VERIFY_VALID, MARK_DUPLICATE, or FLAG_FRAUDULENT.` });
   }
 
-  // Remove from pending queue
   state.pendingVerifications.splice(reportIndex, 1);
 
   res.json({
@@ -762,12 +469,9 @@ router.post('/verify-report', (req, res) => {
   });
 });
 
-// ── POST /api/citizen/report ─────────────────────────────────────────────────
-// Allows citizen to submit a new emergency report (subject to rate limit & duplicate check)
 router.post('/report', (req, res) => {
   const { actionKey = 'VALID_INCIDENT_REPORT', emergencyType = 'Road Collision', location = 'MG Road Metro Station', details = '', receivingHospital = 'Victoria Hospital ER' } = req.body;
 
-  // 1. Anti-abuse check: Account restriction
   if (state.activeCitizen.accountStatus === 'Restricted') {
     return res.status(403).json({
       success: false,
@@ -776,7 +480,6 @@ router.post('/report', (req, res) => {
     });
   }
 
-  // 2. Anti-abuse check: Rate limit
   if (state.activeCitizen.hourlyReportsSubmitted >= DYNAMIC_POINTS_CONFIG.antiAbuseRules.maxReportsPerHour) {
     return res.status(429).json({
       success: false,
@@ -822,16 +525,10 @@ router.post('/report', (req, res) => {
   });
 });
 
-// ── POST /api/citizen/appeal ─────────────────────────────────────────────────
-// Allows citizen to appeal account restriction
 router.post('/appeal', (req, res) => {
   const { reason = '', contactPhone = '', additionalEvidence = '' } = req.body;
-
   if (state.activeCitizen.accountStatus !== 'Restricted') {
-    return res.status(400).json({
-      success: false,
-      error: 'Account is in Good Standing. No restriction appeal required.'
-    });
+    return res.status(400).json({ success: false, error: 'Account is in Good Standing. No restriction appeal required.' });
   }
 
   const appealRecord = {
@@ -861,8 +558,6 @@ router.post('/appeal', (req, res) => {
   });
 });
 
-// ── POST /api/citizen/reset ──────────────────────────────────────────────────
-// Allows instant reset for demonstrations and automated testing
 router.post('/reset', (req, res) => {
   state.activeCitizen.totalPoints = 85;
   state.activeCitizen.verifiedContributions = 6;
@@ -883,4 +578,3 @@ router.post('/reset', (req, res) => {
 });
 
 module.exports = router;
-

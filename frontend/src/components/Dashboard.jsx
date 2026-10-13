@@ -1,31 +1,17 @@
 import React from 'react';
 import { formatETA } from '../utils/aiEngine';
 import { TRAFFIC_LEVELS, getOverallTrafficLevel } from '../utils/trafficSimulator';
+import { Clock, Navigation, AlertTriangle, ShieldCheck } from 'lucide-react';
 
-function StatBox({ label, value, unit, color = '#00d4ff', pulse = false }) {
+function StatCard({ label, value, unit, isPulse }) {
   return (
-    <div style={{
-      textAlign: 'center',
-      padding: '8px 12px',
-      background: 'var(--surface)',
-      border: `1px solid ${color}33`,
-      borderRadius: 8,
-      minWidth: 90,
-    }}>
-      <div style={{
-        fontFamily: 'var(--font-mono)', fontSize: 9,
-        color: 'var(--muted)', letterSpacing: '0.12em', marginBottom: 2,
-      }}>{label}</div>
-      <div style={{
-        fontFamily: 'var(--font-display)',
-        fontSize: 18, fontWeight: 700,
-        color,
-        textShadow: `0 0 15px ${color}60`,
-        animation: pulse ? 'pulse 1.2s ease-in-out infinite' : 'none',
-        lineHeight: 1,
-      }}>
-        {value}
-        {unit && <span style={{ fontSize: 10, marginLeft: 2 }}>{unit}</span>}
+    <div className="text-center px-3 py-2 bg-slate-50 dark:bg-slate-900/60 rounded-lg border border-slate-200/80 dark:border-slate-800 min-w-[76px]">
+      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+        {label}
+      </div>
+      <div className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 leading-none">
+        <span>{value}</span>
+        {unit && <span className="text-[10px] font-normal text-slate-500 ml-0.5">{unit}</span>}
       </div>
     </div>
   );
@@ -41,147 +27,73 @@ export default function Dashboard({
   trafficConditions,
   emergencyMode,
   rerouteCount = 0,
-  onOpenCitizenDashboard,
 }) {
   if (phase === 'idle') return null;
 
   const overallTraffic = getOverallTrafficLevel(trafficConditions);
-  const trafficLabel = overallTraffic > 0.66 ? 'HIGH' : overallTraffic > 0.33 ? 'MED' : 'LOW';
-  const trafficColor = TRAFFIC_LEVELS[trafficLabel === 'MED' ? 'MEDIUM' : trafficLabel]?.color || '#00ff88';
+  const trafficLabel = overallTraffic > 0.66 ? 'Heavy' : overallTraffic > 0.33 ? 'Moderate' : 'Clear';
 
   return (
-    <div style={{
-      position: 'absolute',
-      bottom: 16, left: 16,
-      zIndex: 900,
-      display: 'flex', flexDirection: 'column', gap: 8,
-    }}>
-      {/* Main stats */}
-      <div style={{
-        display: 'flex', gap: 6,
-        background: 'var(--card)',
-        border: '1px solid var(--border)',
-        borderRadius: 10,
-        padding: 8,
-        backdropFilter: 'blur(12px)',
-        boxShadow: '0 4px 30px rgba(0,0,0,0.5)',
-      }}>
-        {eta !== null && (
-          <StatBox
-            label="ETA"
-            value={formatETA(eta)}
-            color="#00d4ff"
-            pulse={phase === 'enroute'}
-          />
-        )}
-        {distance && (
-          <StatBox
-            label="DISTANCE"
-            value={parseFloat(distance).toFixed(1)}
-            unit="km"
-            color="#00d4ff"
-          />
-        )}
-        {rerouteCount > 0 && (
-          <StatBox
-            label="REROUTES"
-            value={rerouteCount}
-            color="#ffa500"
-          />
-        )}
-        <StatBox
-          label="TRAFFIC"
-          value={trafficLabel}
-          color={trafficColor}
-        />
-      </div>
-
-      {/* Progress bar during route */}
-      {phase === 'enroute' && (
-        <div style={{
-          background: 'var(--card)',
-          border: '1px solid var(--border)',
-          borderRadius: 8, padding: '8px 12px',
-          backdropFilter: 'blur(12px)',
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--muted)' }}>
-              🚑 {selectedAmbulance?.name} → 🏥 {selectedHospital?.shortName}
-            </span>
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 9, color: '#00d4ff' }}>
-              {routeProgress}%
+    <div className="absolute bottom-4 right-4 z-[900] flex flex-col gap-2 max-w-sm">
+      {/* ── Floating Telemetry Card ─────────────────────────────────── */}
+      <div className="bg-white/95 dark:bg-[#10243A]/95 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-card backdrop-blur-md space-y-2.5">
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${phase === 'enroute' ? 'bg-teal animate-pulse' : 'bg-primary-500'}`} />
+            <span className="font-bold text-slate-900 dark:text-slate-100">
+              {phase === 'enroute' ? 'Active Mission Telemetry' : 'Route Overview'}
             </span>
           </div>
-          <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%',
-              width: `${routeProgress}%`,
-              background: 'linear-gradient(90deg, #00d4ff, #00ff88)',
-              borderRadius: 2,
-              transition: 'width 0.3s ease',
-              boxShadow: '0 0 8px rgba(0,212,255,0.6)',
-            }} />
-          </div>
-        </div>
-      )}
-
-      {/* Emergency mode indicator */}
-      {emergencyMode && (
-        <div style={{
-          background: 'rgba(255,51,51,0.12)',
-          border: '1px solid #ff333344',
-          borderRadius: 8, padding: '6px 12px',
-          display: 'flex', alignItems: 'center', gap: 8,
-          backdropFilter: 'blur(12px)',
-          animation: 'pulse 1.5s ease-in-out infinite',
-        }}>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#ff3333', boxShadow: '0 0 8px #ff3333' }} />
-          <span style={{ fontFamily: 'var(--font-display)', fontSize: 10, color: '#ff6666', letterSpacing: '0.12em' }}>
-            🚨 EMERGENCY PRIORITY — SIGNAL OVERRIDE ACTIVE
-          </span>
-        </div>
-      )}
-
-      {/* Arrived state */}
-      {phase === 'arrived' && (
-        <div style={{
-          background: 'rgba(0,255,136,0.12)',
-          border: '1px solid #00ff8844',
-          borderRadius: 8, padding: '8px 16px',
-          textAlign: 'center',
-          backdropFilter: 'blur(12px)',
-        }}>
-          <div style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 14, fontWeight: 700,
-            color: '#00ff88', letterSpacing: '0.1em',
-          }}>✅ PATIENT DELIVERED</div>
-          <div style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 10, color: 'var(--muted)', marginTop: 2,
-          }}>Ambulance arrived at {selectedHospital?.name}</div>
-
-          {onOpenCitizenDashboard && (
-            <button
-              onClick={onOpenCitizenDashboard}
-              style={{
-                marginTop: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                fontWeight: 700,
-                background: 'rgba(0,255,136,0.2)',
-                color: '#00ff88',
-                border: '1px solid rgba(0,255,136,0.4)',
-                cursor: 'pointer',
-              }}
-            >
-              🏥 Review & Verify Community Report (+RIP)
-            </button>
+          {emergencyMode && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-emergency dark:bg-red-950/40">
+              Priority Active
+            </span>
           )}
         </div>
-      )}
+
+        <div className="flex items-center gap-2">
+          {eta !== null && (
+            <StatCard
+              label="ETA"
+              value={formatETA(eta)}
+              isPulse={phase === 'enroute'}
+            />
+          )}
+          {distance && (
+            <StatCard
+              label="Distance"
+              value={parseFloat(distance).toFixed(1)}
+              unit="km"
+            />
+          )}
+          {rerouteCount > 0 && (
+            <StatCard
+              label="Reroutes"
+              value={rerouteCount}
+            />
+          )}
+          <StatCard
+            label="Traffic"
+            value={trafficLabel}
+          />
+        </div>
+
+        {/* Progress Bar during transit */}
+        {phase === 'enroute' && (
+          <div className="space-y-1 pt-1">
+            <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+              <span>Transit Progress</span>
+              <span className="font-bold text-teal">{Math.round((routeProgress || 0) * 100)}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-teal rounded-full transition-all duration-300"
+                style={{ width: `${Math.min(100, (routeProgress || 0) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

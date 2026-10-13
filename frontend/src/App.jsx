@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
 import MapView from './components/MapView';
 import Header from './components/Header';
 import EmergencyInput from './components/EmergencyInput';
@@ -11,6 +11,13 @@ import Dashboard from './components/Dashboard';
 import SOSOverlay from './components/SOSOverlay';
 import DispatchTimeline from './components/DispatchTimeline';
 import CitizenDashboard from './components/citizen/CitizenDashboard';
+import HospitalDashboard from './components/hospital/HospitalDashboard';
+import AmbulanceCockpit from './components/ambulance/AmbulanceCockpit';
+import CityEmergenciesPanel from './components/CityEmergenciesPanel';
+import RoleLoginModal from './components/auth/RoleLoginModal';
+import { Ambulance, Radio, Lock, ArrowRight, ArrowLeft, AlertOctagon, AlertCircle } from 'lucide-react';
+import { useHospitalBeds, generateHospitalsAroundLocation } from './context/HospitalBedContext';
+import { SimulationContext } from './context/SimulationContext';
 
 import { scoreAmbulance, scoreHospital, getTrafficMultiplier } from './utils/aiEngine';
 import {
@@ -20,18 +27,108 @@ import {
   fetchHospitalsFromBackend,
 } from './utils/geoUtils';
 import {
-  generateTrafficConditions, simulateTrafficIncrease,
+  generateTrafficConditions,
   generateTrafficSegments, shouldReroute,
   fetchRealTimeTraffic, fetchFlowSegment, levelFromFlowSegment, TRAFFIC_LEVELS,
 } from './utils/trafficSimulator';
+
+const DEFAULT_CITY_EMERGENCIES = [
+  {
+    id: 'EMG-801',
+    locationName: 'Indiranagar 100ft Rd',
+    type: 'Accident',
+    lat: 12.9716,
+    lng: 77.6412,
+    timeReported: '3m ago',
+    status: 'PENDING',
+    severity: 'CRITICAL'
+  },
+  {
+    id: 'EMG-802',
+    locationName: 'Koramangala 5th Block',
+    type: 'Cardiac Arrest',
+    lat: 12.9352,
+    lng: 77.6245,
+    timeReported: '1m ago',
+    status: 'PENDING',
+    severity: 'CODE RED'
+  },
+  {
+    id: 'EMG-803',
+    locationName: 'Whitefield Tech Zone',
+    type: 'Burn',
+    lat: 12.9698,
+    lng: 77.7499,
+    timeReported: '6m ago',
+    status: 'PENDING',
+    severity: 'URGENT'
+  },
+  {
+    id: 'EMG-804',
+    locationName: 'Jayanagar 4th Block',
+    type: 'Trauma',
+    lat: 12.9250,
+    lng: 77.5938,
+    timeReported: '8m ago',
+    status: 'PENDING',
+    severity: 'SEVERE'
+  },
+  {
+    id: 'EMG-805',
+    locationName: 'Malleshwaram 8th Cross',
+    type: 'Stroke',
+    lat: 12.9982,
+    lng: 77.5704,
+    timeReported: '2m ago',
+    status: 'PENDING',
+    severity: 'CRITICAL'
+  }
+];
 
 // ─── App ───────────────────────────────────────────────────────────
 export default function App() {
   // ── Core state ──────────────────────────────────────────────────
   const [phase, setPhase]                           = useState('idle');
-  const [currentView, setCurrentView]               = useState('dispatch'); // 'dispatch' | 'citizen' | 'hospital'
+  // Landing view = citizen portal by default (no login required)
+  const [currentView, setCurrentView]               = useState('citizen'); // 'citizen' | 'dispatch' | 'hospital' | 'ambulance'
+  const [dispatcherMobileTab, setDispatcherMobileTab] = useState('map'); // 'queue' | 'map' | 'dispatch'
+  const { theme, toggleTheme } = useContext(SimulationContext);
+  const darkMode = theme === 'dark';
+  // Track which role portals are logged in: { dispatch: {...user}, hospital: {...user}, ambulance: {...user} }
+  const [loggedInRoles, setLoggedInRoles] = useState(() => {
+    try {
+      const saved = localStorage.getItem('lifeline_logged_in_roles');
+      return saved ? JSON.parse(saved) : {};
+    } catch (_) { return {}; }
+  });
+  // Which login modal is open (null = none)
+  const [loginModalRole, setLoginModalRole]         = useState(null);
   const [emergencyLocation, setEmergencyLocation]   = useState(null);
   const [emergencyType, setEmergencyType]           = useState('Accident');
+
+  const {
+    hospitals: liveHospitalsContext,
+    registerIncomingAmbulance,
+    removeIncomingAmbulance,
+    quickAdmit,
+    getHospitalFleet,
+    assignAmbulanceTask,
+    activeMission,
+    ambulanceLiveLocation
+  } = useHospitalBeds();
+
+  const [cityEmergencies, setCityEmergencies] = useState(() => {
+    try {
+      const saved = localStorage.getItem('lifeline_city_emergencies');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (_) {}
+    return DEFAULT_CITY_EMERGENCIES;
+  });
+  const [activeEmergencyId, setActiveEmergencyId]   = useState(null);
+  const [newCitizenAlert, setNewCitizenAlert]       = useState(null);
 
   // ── Ambulances ───────────────────────────────────────────────────
   const [ambulances, setAmbulances]                 = useState([]);
@@ -61,7 +158,6 @@ export default function App() {
   const [trafficEnabled, setTrafficEnabled]         = useState(true);
   const [emergencyMode, setEmergencyMode]           = useState(false);
   const [trafficConditions, setTrafficConditions]   = useState({});
-  const [simulationSpeed, setSimulationSpeed]       = useState(60);
 
   // ── Stats ─────────────────────────────────────────────────────────
   const [eta, setEta]                               = useState(null);
@@ -83,11 +179,11 @@ export default function App() {
 
   // ── Dispatch Timeline ─────────────────────────────────────────────
   const TIMELINE_STEPS = [
-    { key: 'created',   icon: '🚨', label: 'Emergency Created' },
-    { key: 'assigned',  icon: '🚑', label: 'Ambulance Assigned' },
-    { key: 'enroute',   icon: '📍', label: 'Ambulance En Route' },
-    { key: 'pickup',    icon: '👤', label: 'Patient Picked Up' },
-    { key: 'arrived',   icon: '🏥', label: 'Reached Hospital' },
+    { key: 'created',   label: 'Emergency Created' },
+    { key: 'assigned',  label: 'Ambulance Assigned' },
+    { key: 'enroute',   label: 'Ambulance En Route' },
+    { key: 'pickup',    label: 'Patient Picked Up' },
+    { key: 'arrived',   label: 'Reached Hospital' },
   ];
   const [dispatchTimeline, setDispatchTimeline]      = useState([]);
 
@@ -170,14 +266,14 @@ export default function App() {
     // Initialize dispatch timeline — step 1: Emergency Created
     const now = new Date().toLocaleTimeString('en-IN');
     setDispatchTimeline([
-      { key: 'created', icon: '🚨', label: 'Emergency Created', time: now, done: true, active: false },
-      { key: 'assigned', icon: '🚑', label: 'Ambulance Assigned', time: null, done: false, active: false },
-      { key: 'enroute', icon: '📍', label: 'Ambulance En Route', time: null, done: false, active: false },
-      { key: 'pickup', icon: '👤', label: 'Patient Picked Up', time: null, done: false, active: false },
-      { key: 'arrived', icon: '🏥', label: 'Reached Hospital', time: null, done: false, active: false },
+      { key: 'created', label: 'Emergency Created', time: now, done: true, active: false },
+      { key: 'assigned', label: 'Ambulance Assigned', time: null, done: false, active: false },
+      { key: 'enroute', label: 'Ambulance En Route', time: null, done: false, active: false },
+      { key: 'pickup', label: 'Patient Picked Up', time: null, done: false, active: false },
+      { key: 'arrived', label: 'Reached Hospital', time: null, done: false, active: false },
     ]);
 
-    addAlert('🔍 Fetching nearby hospitals from OpenStreetMap...', 'info');
+    addAlert('Querying nearby hospital facilities via Ola Maps...', 'info');
     setHospitalLoading(true);
 
     // Parallel fetch: hospitals (via backend) + real traffic
@@ -188,9 +284,15 @@ export default function App() {
 
     setHospitalLoading(false);
 
-    // No static fallback — if empty, show message and stay at located phase
-    if (!fetchedHospitals || fetchedHospitals.length === 0) {
-      addAlert('⚠️ No hospitals found in this area — try clicking a different location', 'warning');
+    const activeHospitalsPool = (fetchedHospitals && fetchedHospitals.length > 0)
+      ? fetchedHospitals
+      : (liveHospitalsContext && liveHospitalsContext.length > 0 ? liveHospitalsContext : []);
+
+    // Dynamically guarantee 6 realistic apex trauma & emergency facilities clustered right around the incident (1-4 km)
+    const nearbyPool = generateHospitalsAroundLocation(loc.lat, loc.lng, activeHospitalsPool);
+
+    if (nearbyPool.length === 0) {
+      addAlert('No hospitals found in this area — please select a different location', 'warning');
       setLocalHospitals([]);
       setRankedHospitals([]);
       setSelectedHospital(null);
@@ -199,17 +301,38 @@ export default function App() {
       return;
     }
 
-    setLocalHospitals(fetchedHospitals);
+    // Enrich fetched hospitals with live bed metrics from context
+    const enrichedHospitals = nearbyPool.map(h => {
+      const match = (liveHospitalsContext || []).find(lh => lh.id === h.id || (lh.name && h.name && lh.name.toLowerCase().includes(h.name.toLowerCase().slice(0, 6))));
+      if (!match) return h;
+      return {
+        ...h,
+        bedsAvailable: match.bedsAvailable,
+        bedsTotal: match.bedsTotal,
+        icuAvailable: match.icuAvailable,
+        icuTotal: match.icuTotal,
+        erBaysAvailable: match.erBaysAvailable,
+        erBaysTotal: match.erBaysTotal
+      };
+    });
 
-    // Road-snapped ambulances near found hospitals
-    addAlert('📍 Snapping ambulance positions to road network...', 'info');
-    const newAmbs = await generateRoadAmbulances(loc.lat, loc.lng, 6, fetchedHospitals);
+    setLocalHospitals(enrichedHospitals);
+
+    const rankedH = rankHospitals(enrichedHospitals, loc, emergencyType, {}, emergencyMode);
+    // Display all nearby ranked hospitals so the dispatcher and citizen see all options
+    setRankedHospitals(rankedH);
+    const targetHosp = rankedH[0];
+    setSelectedHospital(targetHosp);
+
+    // Load the dedicated ambulance fleet belonging to this selected hospital
+    addAlert(`Selected ${targetHosp.name} — Loading dedicated hospital ambulance fleet...`, 'info');
+    const newAmbs = getHospitalFleet(targetHosp.id, targetHosp.name, targetHosp.lat, targetHosp.lng);
 
     // Traffic conditions
-    const traffic = generateTrafficConditions(newAmbs, fetchedHospitals, undefined, realTraffic);
+    const traffic = generateTrafficConditions(newAmbs, enrichedHospitals, undefined, realTraffic);
     setTrafficConditions(traffic);
 
-    // AI scoring
+    // AI scoring for this hospital's ambulances
     const scored = rankAmbulances(newAmbs, loc, traffic, emergencyMode, emergencyType);
     setAmbulances(scored);
     const bestAvail = scored.find(a => a.status === 'available') || scored[0];
@@ -221,17 +344,21 @@ export default function App() {
       s.key === 'assigned' ? { ...s, done: true, active: false, time: assignTime } : s
     ));
 
-    const rankedH = rankHospitals(fetchedHospitals, loc, emergencyType, traffic, emergencyMode);
-    setRankedHospitals(rankedH.slice(0, 3));
-    setSelectedHospital(rankedH[0]);
-
-    const preEta = (bestAvail?.estimatedArrival || 5) + (rankedH[0]?.estimatedTime || 5);
+    const preEta = (bestAvail?.estimatedArrival || 5) + (targetHosp?.estimatedTime || 5);
     setEta(preEta);
 
-    addAlert('🆘 Emergency location set! AI analyzing situation...', 'danger');
-    setTimeout(() => addAlert(`🚑 AI selected: ${bestAvail.name} (Score: ${bestAvail.score.toFixed(0)})`, 'success'), 700);
-    setTimeout(() => addAlert(`🏥 Recommended: ${rankedH[0]?.name || 'Hospital'} — ${rankedH[0]?.type || 'Medical Facility'}`, 'info'), 1400);
-  }, [phase, emergencyMode, emergencyType, rankAmbulances, rankHospitals, addAlert]);
+    addAlert('Emergency incident coordinates registered. Evaluating triage matrix...', 'danger');
+    setTimeout(() => addAlert(`Unit selected: ${bestAvail.name} (${targetHosp.name} Fleet)`, 'success'), 700);
+    setTimeout(() => addAlert(`Hospital ER: ${targetHosp.name} — ${targetHosp.bedsAvailable ? targetHosp.bedsAvailable + ' beds available' : 'Active'}`, 'info'), 1400);
+  }, [phase, emergencyMode, emergencyType, liveHospitalsContext, rankAmbulances, rankHospitals, addAlert, getHospitalFleet]);
+
+  // Dispatcher select emergency from citywide queue
+  const handleSelectCityEmergency = useCallback(async (emg) => {
+    setActiveEmergencyId(emg.id);
+    setEmergencyType(emg.type);
+    await handleMapClick({ lat: emg.lat, lng: emg.lng });
+    addAlert(`Central Dispatch focused incident: ${emg.locationName} (${emg.type})`, 'warning');
+  }, [handleMapClick, addAlert]);
 
 
   // ── Core dispatch engine ──────────────────────────────────────────
@@ -311,21 +438,45 @@ export default function App() {
     etaBaseRef.current = optMin;
 
     if (startIdx === 0) {
-      addAlert(`🚑 ${amb.name} dispatched — ${activeMode.toUpperCase()} route active!`, 'success');
-      addAlert(`🛣️ ${activeMode === 'normal' ? 'Direct route — no rerouting' : activeMode === 'alternative' ? 'Alternative path active' : 'Optimal route — auto-rerouting enabled'}`, 'info');
-      if (mode) addAlert('🚨 Signal override ACTIVE — all lights cleared', 'danger');
-      addAlert(`📍 En route to ${hosp.name}`, 'info');
+      addAlert(`${amb.name} dispatched — ${activeMode.toUpperCase()} route active`, 'success');
+      addAlert(`${activeMode === 'normal' ? 'Direct route — standard routing' : activeMode === 'alternative' ? 'Alternative road corridor active' : 'Optimal route — dynamic rerouting enabled'}`, 'info');
+      if (mode) addAlert('Emergency signal override active — green wave priority', 'danger');
+      addAlert(`En route to ${hosp.name}`, 'info');
+
+      // Register incoming ambulance in Hospital Bed Command Center
+      registerIncomingAmbulance({
+        id: `intake-${amb.id}`,
+        ambulanceName: amb.name,
+        emergencyType: emergencyType,
+        eta: optMin ? `${optMin.toFixed(1)} min` : '3.8 min',
+        triageLevel: emergencyType === 'Cardiac Arrest' ? 'Code Red' : 'Severe Trauma',
+        hospitalId: hosp.id
+      });
+
+      // Update city emergency call status
+      if (activeEmergencyId) {
+        setCityEmergencies(prev => prev.map(e => e.id === activeEmergencyId ? { ...e, status: 'EN ROUTE' } : e));
+      }
+
       // Timeline step 3: Ambulance En Route
       const enrouteTime = new Date().toLocaleTimeString('en-IN');
       setDispatchTimeline(prev => prev.map(s =>
         s.key === 'enroute' ? { ...s, done: true, active: true, time: enrouteTime } : s
       ));
     } else {
-      addAlert('🔄 Traffic rerouted — ambulance on new road path', 'success');
+      addAlert('Traffic rerouted — unit following updated road corridor', 'success');
+    }
+
+    // If Paramedic / Ambulance person has logged in and is streaming live device GPS:
+    // DO NOT SIMULATE IT! Position is driven strictly by live telemetry from the device.
+    if (ambulanceLiveLocation?.active) {
+      addAlert('Live Paramedic GPS telemetry active — real-time position reporting', 'info');
+      setAmbulancePosition([ambulanceLiveLocation.lat, ambulanceLiveLocation.lng]);
+      return;
     }
 
     const realDurMs  = optMin * 60 * 1000;
-    const animDurMs  = realDurMs / simulationSpeed;
+    const animDurMs  = realDurMs / 60;
 
     if (animRef.current) clearInterval(animRef.current);
     animRef.current = setInterval(() => {
@@ -344,14 +495,23 @@ export default function App() {
         setRouteProgress(100);
         setEta(0);
         setPhase('arrived');
+
+        // Hospital Bed Allocation: auto-decrement available bed & remove intake
+        quickAdmit(hosp.id, emergencyType === 'Cardiac Arrest');
+        removeIncomingAmbulance(`intake-${amb.id}`);
+
+        if (activeEmergencyId) {
+          setCityEmergencies(prev => prev.map(e => e.id === activeEmergencyId ? { ...e, status: 'RESOLVED' } : e));
+        }
+
         // Timeline step 5: Reached Hospital
         const arrivedTime = new Date().toLocaleTimeString('en-IN');
         setDispatchTimeline(prev => prev.map(s =>
           s.key === 'arrived' ? { ...s, done: true, active: false, time: arrivedTime }
           : s.key === 'enroute' ? { ...s, active: false } : s
         ));
-        addAlert(`✅ Ambulance arrived at ${hosp.name}!`, 'success');
-        addAlert('📋 Patient handover complete — case closed', 'info');
+        addAlert(`Ambulance arrived at ${hosp.name}`, 'success');
+        addAlert('Patient handover complete — ER bay confirmed and mission concluded', 'info');
         return;
       }
 
@@ -359,19 +519,77 @@ export default function App() {
       setRouteProgress(Math.min(99, Math.floor((idx / totalPts) * 100)));
       setEta(etaBaseRef.current * Math.max(0, 1 - idx / totalPts));
 
-      if (idx === Math.floor(totalPts * 0.3) && !patientPickedUpRef.current)  addAlert('🚑 Approaching patient pickup point', 'info');
+      if (idx === Math.floor(totalPts * 0.3) && !patientPickedUpRef.current)  addAlert('Approaching incident pickup coordinates', 'info');
       if (idx >= targetPickupIdx && !patientPickedUpRef.current) {
         patientPickedUpRef.current = true;
-        addAlert('👤 Patient on board — heading to hospital', 'success');
+        addAlert('Patient on board — proceeding to destination emergency department', 'success');
         // Timeline step 4: Patient Picked Up
         const pickupTime = new Date().toLocaleTimeString('en-IN');
         setDispatchTimeline(prev => prev.map(s =>
           s.key === 'pickup' ? { ...s, done: true, active: false, time: pickupTime } : s
         ));
       }
-      if (idx === Math.floor(totalPts * 0.75) && patientPickedUpRef.current) addAlert('🏥 Approaching hospital — prepare ER team', 'warning');
-    }, Math.max(40, (optMin * 60 * 1000 / simulationSpeed) / (activeRoute.length || 50)));
-  }, [simulationSpeed, addAlert, routeMode]);
+      if (idx === Math.floor(totalPts * 0.75) && patientPickedUpRef.current) addAlert('Approaching hospital facility — alerting trauma team', 'warning');
+    }, Math.max(40, (optMin * 60 * 1000 / 60) / (activeRoute.length || 50)));
+  }, [addAlert, routeMode, ambulanceLiveLocation]);
+
+  // ── Real-Time Live GPS Stream Sync (Ambulance MDT -> Dispatcher & Citizen) ──
+  useEffect(() => {
+    if (!ambulanceLiveLocation?.lat || !ambulanceLiveLocation?.lng) return;
+
+    if (ambulanceLiveLocation.active) {
+      // Clear synthetic timer animation if running
+      if (animRef.current) {
+        clearInterval(animRef.current);
+        animRef.current = null;
+      }
+
+      const currentPos = [ambulanceLiveLocation.lat, ambulanceLiveLocation.lng];
+      setAmbulancePosition(currentPos);
+
+      if (phase === 'enroute' || phase === 'located') {
+        const targetPt = !patientPickedUpRef.current && emergencyLocation
+          ? emergencyLocation
+          : selectedHospital;
+
+        if (targetPt) {
+          const remDist = calculateDistance(
+            ambulanceLiveLocation.lat,
+            ambulanceLiveLocation.lng,
+            targetPt.lat,
+            targetPt.lng
+          );
+          setDistance(remDist.toFixed(2));
+          const effectiveSpeed = ambulanceLiveLocation.speed > 10 ? ambulanceLiveLocation.speed : 45;
+          const liveEtaMin = (remDist / effectiveSpeed) * 60;
+          setEta(Math.max(0.5, Math.round(liveEtaMin * 10) / 10));
+
+          // Proximity milestone: Patient pickup at scene (within 250m)
+          if (!patientPickedUpRef.current && emergencyLocation && remDist <= 0.25) {
+            patientPickedUpRef.current = true;
+            addAlert('Live Paramedic arrived at scene — patient intake complete', 'success');
+            const pickupTime = new Date().toLocaleTimeString('en-IN');
+            setDispatchTimeline(prev => prev.map(s =>
+              s.key === 'pickup' ? { ...s, done: true, active: false, time: pickupTime } : s
+            ));
+          }
+
+          // Proximity milestone: Hospital arrival (within 250m)
+          if (patientPickedUpRef.current && selectedHospital && remDist <= 0.25 && phase !== 'arrived') {
+            setPhase('arrived');
+            quickAdmit(selectedHospital.id, emergencyType === 'Cardiac Arrest');
+            removeIncomingAmbulance(`intake-${selectedAmbulance?.id || 101}`);
+            const arrivedTime = new Date().toLocaleTimeString('en-IN');
+            setDispatchTimeline(prev => prev.map(s =>
+              s.key === 'arrived' ? { ...s, done: true, active: false, time: arrivedTime }
+              : s.key === 'enroute' ? { ...s, active: false } : s
+            ));
+            addAlert(`Ambulance arrived at ${selectedHospital.name}. ER handover complete.`, 'success');
+          }
+        }
+      }
+    }
+  }, [ambulanceLiveLocation, phase, emergencyLocation, selectedHospital, selectedAmbulance, emergencyType, quickAdmit, removeIncomingAmbulance, addAlert]);
 
 
   // ── Preview both routes when hospital/ambulance selected ─────────
@@ -393,11 +611,192 @@ export default function App() {
     return () => clearTimeout(previewRoutesRef.current);
   }, [phase, selectedAmbulance, selectedHospital, emergencyLocation]);
 
-  // ── Manual dispatch wrapper ────────────────────────────────────────
+  // ── Hospital Selection & Fleet Switching Handler ───────────────────
+  const handleHospitalChange = useCallback((hosp) => {
+    if (!hosp) return;
+    setSelectedHospital(hosp);
+
+    // Load that hospital's dedicated fleet
+    const fleet = getHospitalFleet(hosp.id, hosp.name, hosp.lat, hosp.lng);
+    
+    if (emergencyLocation) {
+      const traffic = generateTrafficConditions(fleet, localHospitals, undefined);
+      setTrafficConditions(traffic);
+      const scored = rankAmbulances(fleet, emergencyLocation, traffic, emergencyMode, emergencyType);
+      setAmbulances(scored);
+      const best = scored.find(a => a.status === 'available') || scored[0];
+      setSelectedAmbulance(best);
+      addAlert(`Selected ${hosp.name} — Loaded dedicated ambulance fleet (${fleet.length} units)`, 'info');
+    } else {
+      setAmbulances(fleet);
+      setSelectedAmbulance(fleet.find(a => a.status === 'available') || fleet[0]);
+    }
+  }, [emergencyLocation, localHospitals, emergencyMode, emergencyType, rankAmbulances, addAlert, getHospitalFleet]);
+
+  // ── Manual dispatch wrapper with Task Assignment ───────────────────
   const handleDispatch = useCallback(() => {
+    if (!selectedAmbulance || !selectedHospital || !emergencyLocation) return;
     setRerouteCount(0);
+
+    // Create full mission task directive assigned to this unit
+    const mission = {
+      taskId: `TSK-${selectedAmbulance.id}-${Date.now().toString().slice(-4)}`,
+      emergencyType,
+      patientLocation: {
+        lat: emergencyLocation.lat,
+        lng: emergencyLocation.lng,
+        address: emergencyLocation.address || 'Emergency Incident Scene',
+        contact: '+91-98450-12345 (Citizen On Scene)'
+      },
+      destinationHospital: {
+        id: selectedHospital.id,
+        name: selectedHospital.name,
+        address: selectedHospital.address || 'Hospital Emergency Receiving Bay',
+        assignedBay: `ER Trauma Bay #${(selectedHospital.id % 4) + 1} (Red Priority)`,
+        receivingDoctor: `Dr. In-Charge (${selectedHospital.shortName || 'ER'} Lead)`,
+        bedsAvailable: selectedHospital.bedsAvailable,
+        icuAvailable: selectedHospital.icuAvailable
+      },
+      assignedAmbulance: selectedAmbulance,
+      dispatchedAt: new Date().toLocaleTimeString('en-IN'),
+      routingEngine: 'Ola Maps Directions API'
+    };
+
+    assignAmbulanceTask(selectedHospital.id, selectedAmbulance.id, mission);
+    addAlert(`Mission ${mission.taskId} authorized: ${selectedAmbulance.name} (${selectedHospital.name} Fleet) dispatched`, 'danger');
+
     executeDispatch(emergencyLocation, selectedAmbulance, selectedHospital, trafficConditions, emergencyMode, emergencyType, 0, routeMode);
-  }, [emergencyLocation, selectedAmbulance, selectedHospital, trafficConditions, emergencyMode, emergencyType, executeDispatch, routeMode]);
+  }, [emergencyLocation, selectedAmbulance, selectedHospital, trafficConditions, emergencyMode, emergencyType, executeDispatch, routeMode, assignAmbulanceTask, addAlert]);
+
+  // ── Dispatcher Quick Assign & Dispatch from CAD Queue ─────────────
+  const handleQuickDispatch = useCallback(async (emg) => {
+    if (!emg) return;
+    setActiveEmergencyId(emg.id);
+    setEmergencyType(emg.type);
+
+    const loc = {
+      lat: Number(emg.lat),
+      lng: Number(emg.lng),
+      address: emg.locationName || 'Emergency Incident Scene'
+    };
+    setEmergencyLocation(loc);
+    setPhase('located');
+    setRoute([]);
+    setAlternateRoutes([]);
+    setAmbulancePosition(null);
+    setRouteProgress(0);
+    setEta(null);
+    setDistance(null);
+
+    // Step 1: Emergency Created timeline
+    const now = new Date().toLocaleTimeString('en-IN');
+    setDispatchTimeline([
+      { key: 'created', label: 'Emergency Created', time: now, done: true, active: false },
+      { key: 'assigned', label: 'Ambulance Assigned', time: null, done: false, active: false },
+      { key: 'enroute', label: 'Ambulance En Route', time: null, done: false, active: false },
+      { key: 'pickup', label: 'Patient Picked Up', time: null, done: false, active: false },
+      { key: 'arrived', label: 'Reached Hospital', time: null, done: false, active: false },
+    ]);
+
+    addAlert(`Intaking emergency call: ${emg.locationName} (${emg.type}) — assigning nearest unit...`, 'danger');
+
+    // Step 2: Fetch and rank nearby hospitals
+    setHospitalLoading(true);
+    const [fetchedHospitals, realTraffic] = await Promise.all([
+      fetchHospitalsFromBackend(loc.lat, loc.lng),
+      fetchRealTimeTraffic(loc.lat, loc.lng),
+    ]);
+    setHospitalLoading(false);
+
+    const activeHospitalsPool = (fetchedHospitals && fetchedHospitals.length > 0)
+      ? fetchedHospitals
+      : (liveHospitalsContext && liveHospitalsContext.length > 0 ? liveHospitalsContext : []);
+
+    const nearbyPool = generateHospitalsAroundLocation(loc.lat, loc.lng, activeHospitalsPool);
+    const enrichedHospitals = nearbyPool.map(h => {
+      const match = (liveHospitalsContext || []).find(lh => lh.id === h.id || (lh.name && h.name && lh.name.toLowerCase().includes(h.name.toLowerCase().slice(0, 6))));
+      return match ? {
+        ...h,
+        bedsAvailable: match.bedsAvailable,
+        bedsTotal: match.bedsTotal,
+        icuAvailable: match.icuAvailable,
+        icuTotal: match.icuTotal,
+        erBaysAvailable: match.erBaysAvailable,
+        erBaysTotal: match.erBaysTotal
+      } : h;
+    });
+
+    setLocalHospitals(enrichedHospitals);
+    const rankedH = rankHospitals(enrichedHospitals, loc, emg.type, {}, emergencyMode);
+    setRankedHospitals(rankedH);
+    const targetHosp = rankedH[0] || enrichedHospitals[0];
+    setSelectedHospital(targetHosp);
+
+    // Step 3: Fleet & ambulance assignment
+    const newAmbs = getHospitalFleet(targetHosp.id, targetHosp.name, targetHosp.lat, targetHosp.lng);
+    const traffic = generateTrafficConditions(newAmbs, enrichedHospitals, undefined, realTraffic);
+    setTrafficConditions(traffic);
+
+    const scored = rankAmbulances(newAmbs, loc, traffic, emergencyMode, emg.type);
+    setAmbulances(scored);
+    const bestAvail = scored.find(a => a.status === 'available') || scored[0];
+    setSelectedAmbulance(bestAvail);
+
+    // Step 4: Timeline mark assigned
+    const assignTime = new Date().toLocaleTimeString('en-IN');
+    setDispatchTimeline(prev => prev.map(s =>
+      s.key === 'assigned' ? { ...s, done: true, active: false, time: assignTime } : s
+    ));
+
+    // Step 5: Construct mission directive
+    const mission = {
+      taskId: `TSK-${bestAvail.id}-${Date.now().toString().slice(-4)}`,
+      emergencyId: emg.id,
+      emergencyType: emg.type,
+      citizenName: emg.citizenName || 'Citizen Caller',
+      patientLocation: {
+        lat: loc.lat,
+        lng: loc.lng,
+        address: emg.locationName || 'Emergency Incident Scene',
+        contact: '+91-98450-12345 (Citizen On Scene)',
+        isLiveGps: !!emg.isLiveGps
+      },
+      destinationHospital: {
+        id: targetHosp.id,
+        name: targetHosp.name,
+        address: targetHosp.address || 'Hospital Emergency Receiving Bay',
+        assignedBay: `ER Trauma Bay #${(targetHosp.id % 4) + 1} (Red Priority)`,
+        receivingDoctor: `Dr. In-Charge (${targetHosp.shortName || 'ER'} Lead)`,
+        bedsAvailable: targetHosp.bedsAvailable,
+        icuAvailable: targetHosp.icuAvailable
+      },
+      assignedAmbulance: bestAvail,
+      dispatchedAt: new Date().toLocaleTimeString('en-IN'),
+      routingEngine: 'Ola Maps Directions API'
+    };
+
+    assignAmbulanceTask(targetHosp.id, bestAvail.id, mission);
+    try {
+      localStorage.setItem('lifeline_active_mission', JSON.stringify(mission));
+    } catch (_) {}
+
+    addAlert(`${bestAvail.name} assigned to ${emg.locationName}. Calculating optimal road corridor...`, 'success');
+
+    // Step 6: Execute dispatch and road navigation corridor
+    await executeDispatch(loc, bestAvail, targetHosp, traffic, emergencyMode, emg.type, 0, routeMode);
+
+    // Step 7: Update city emergency status to EN ROUTE
+    setCityEmergencies(prev => {
+      const updated = prev.map(item => item.id === emg.id ? { ...item, status: 'EN ROUTE', assignedAmbulance: bestAvail.name } : item);
+      try { localStorage.setItem('lifeline_city_emergencies', JSON.stringify(updated)); } catch (_) {}
+      return updated;
+    });
+
+    // Step 8: Broadcast dispatch event for Ambulance MDT & Citizen Portal
+    window.dispatchEvent(new CustomEvent('lifeline:ambulance-dispatched', {
+      detail: { mission, ambulance: bestAvail, hospital: targetHosp, location: loc }
+    }));
+  }, [emergencyMode, routeMode, liveHospitalsContext, rankAmbulances, rankHospitals, getHospitalFleet, assignAmbulanceTask, executeDispatch, addAlert]);
 
   // ── Seamless rerouting helper ───────────────────────────────────────
   const performReroute = useCallback(async (conditions) => {
@@ -410,7 +809,7 @@ export default function App() {
     const currentPos = currentRoute[currentIdx];
     if (!currentPos) return;
 
-    addAlert('⚠️ Traffic surge detected — recalculating road path...', 'warning');
+    addAlert('Traffic congestion surge detected — recalculating road path...', 'warning');
 
     const isPickedUp = patientPickedUpRef.current || currentIdx >= pickupIndexRef.current;
     let newRemainingPath = null;
@@ -443,7 +842,7 @@ export default function App() {
     const newOptMin = etaBaseRef.current * 0.85;
     etaBaseRef.current = newOptMin;
 
-    addAlert('✅ New road route calculated from current position — seamless reroute applied', 'success');
+    addAlert('Updated corridor calculated from unit location — seamless reroute applied', 'success');
   }, [phase, selectedHospital, emergencyLocation, trafficConditions, emergencyMode, addAlert]);
 
   // ── Auto-rerouting engine — only runs in 'optimal' mode ─────────
@@ -501,11 +900,45 @@ export default function App() {
         });
 
         setTrafficSegments(richSegments);
-        addAlert('🔄 Real-time traffic data refreshed', 'info');
+        addAlert('Real-time traffic telemetry refreshed', 'info');
       }
     }, 60000);
     return () => clearInterval(trafficTimerRef.current);
   }, [phase, emergencyLocation, ambulances, localHospitals, emergencyMode, route, addAlert]);
+
+  // ── Real-time listener for incoming Citizen emergency reports & cross-tab sync ─────
+  useEffect(() => {
+    const handleCitizenEmergencyEvent = (e) => {
+      const emg = e.detail;
+      if (!emg) return;
+
+      setCityEmergencies(prev => {
+        if (prev.some(item => item.id === emg.id)) return prev;
+        const updated = [emg, ...prev];
+        try { localStorage.setItem('lifeline_city_emergencies', JSON.stringify(updated)); } catch (_) {}
+        return updated;
+      });
+
+      setNewCitizenAlert(emg);
+      addAlert(`Incoming emergency call: ${emg.locationName} (${emg.type}) reported by ${emg.citizenName || 'Citizen'}`, 'danger');
+    };
+
+    const handleStorageEvent = (e) => {
+      if (e.key === 'lifeline_city_emergencies' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) setCityEmergencies(parsed);
+        } catch (_) {}
+      }
+    };
+
+    window.addEventListener('lifeline:citizen-emergency', handleCitizenEmergencyEvent);
+    window.addEventListener('storage', handleStorageEvent);
+    return () => {
+      window.removeEventListener('lifeline:citizen-emergency', handleCitizenEmergencyEvent);
+      window.removeEventListener('storage', handleStorageEvent);
+    };
+  }, [addAlert]);
 
   // ── Select alternate route ────────────────────────────────────────
   const handleSelectAlternate = useCallback((altIdx) => {
@@ -517,17 +950,17 @@ export default function App() {
     setTrafficSegments(generateTrafficSegments(newRoute, trafficConditions, emergencyMode));
     routeRef.current = newRoute;
     idxRef.current   = 0;
-    addAlert(`↪ Switched to alternate route ${altIdx + 1}`, 'success');
+    addAlert(`Switched to alternate corridor ${altIdx + 1}`, 'success');
   }, [alternateRoutes, trafficConditions, emergencyMode, addAlert]);
 
   // ── SOS Automation (Backtick hotkey) ─────────────────────────────
   const triggerSOS = useCallback(async () => {
     if (phase !== 'idle' && phase !== 'located') {
-      addAlert('⚠️ Cannot trigger SOS while simulation is already active.', 'warning');
+      addAlert('Cannot trigger SOS while response mission is active.', 'warning');
       return;
     }
     if (!navigator.geolocation) {
-      addAlert('❌ Geolocation not supported by your browser', 'danger');
+      addAlert('Geolocation not supported by current browser', 'danger');
       return;
     }
 
@@ -540,17 +973,14 @@ export default function App() {
       const eMode = true;
 
       // Pre-fetch data while overlay is shown
-      addAlert('🚨 SOS INITIATED — retrieving location...', 'danger');
+      addAlert('SOS initiated — acquiring location telemetry...', 'danger');
 
       const [fetchedHospitals, realTraffic] = await Promise.all([
         fetchHospitalsFromBackend(loc.lat, loc.lng),
         fetchRealTimeTraffic(loc.lat, loc.lng),
       ]);
-      // No static fallback — SOS with no hospitals will show a warning
-      const hospitals = fetchedHospitals?.length > 0 ? fetchedHospitals : [];
-      if (hospitals.length === 0) {
-        addAlert('⚠️ SOS: No hospitals found nearby — location may be remote', 'warning');
-      }
+      const baseHosps = fetchedHospitals?.length > 0 ? fetchedHospitals : liveHospitalsContext;
+      const hospitals = generateHospitalsAroundLocation(loc.lat, loc.lng, baseHosps);
       const newAmbs   = await generateRoadAmbulances(loc.lat, loc.lng, 6, hospitals);
       const traffic   = generateTrafficConditions(newAmbs, hospitals, undefined, realTraffic);
       const scoredAmbs  = rankAmbulances(newAmbs, loc, traffic, eMode, eType);
@@ -560,7 +990,7 @@ export default function App() {
       sosPendingRef.current = { loc, eType, eMode, hospitals, newAmbs, traffic, scoredAmbs, scoredHosps };
       setSosVisible(true);
     }, (err) => {
-      addAlert('❌ Failed to get live location: ' + err.message, 'danger');
+      addAlert('Failed to acquire live GPS location: ' + err.message, 'danger');
     });
   }, [phase, rankAmbulances, rankHospitals, addAlert]);
 
@@ -588,14 +1018,14 @@ export default function App() {
     setRankedHospitals(scoredHosps.slice(0, 3));
     setSelectedHospital(scoredHosps[0]);
 
-    addAlert('🚨 SOS confirmed — dispatching emergency services!', 'danger');
+    addAlert('Emergency SOS confirmed — authorizing rapid unit dispatch', 'danger');
     executeDispatch(loc, bestAvail, scoredHosps[0], traffic, eMode, eType, 0, 'optimal');
   }, [executeDispatch, addAlert]);
 
   const handleSOSCancel = useCallback(() => {
     setSosVisible(false);
     sosPendingRef.current = null;
-    addAlert('✅ SOS cancelled — false alarm cleared', 'info');
+    addAlert('SOS cancelled — standby status restored', 'info');
   }, [addAlert]);
 
   // Global backtick key listener for SOS
@@ -608,37 +1038,14 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [triggerSOS]);
 
-  // ── Emergency mode toggle ─────────────────────────────────────────
-  const handleEmergencyModeToggle = useCallback((val) => {
-    setEmergencyMode(val);
-    addAlert(val ? '🚨 Emergency Priority Mode activated' : 'ℹ️ Emergency mode deactivated', val ? 'danger' : 'info');
-    if (emergencyLocation && phase === 'located') {
-      const newH = rankHospitals(localHospitals, emergencyLocation, emergencyType, trafficConditions, val);
-      setRankedHospitals(newH.slice(0, 3));
-      setSelectedHospital(h => newH.find(n => n.id === h?.id) || newH[0]);
-      const newA = rankAmbulances(ambulances, emergencyLocation, trafficConditions, val, emergencyType);
-      setAmbulances(newA);
-      const bestAvail = newA.find(a => a.status === 'available') || newA[0];
-      setSelectedAmbulance(bestAvail);
-    }
-  }, [emergencyLocation, phase, emergencyType, trafficConditions, ambulances, localHospitals, rankHospitals, rankAmbulances, addAlert]);
-
-  // ── Traffic spike ──────────────────────────────────────────────────
-  const handleSimulateTraffic = useCallback(() => {
-    const spiked = simulateTrafficIncrease(trafficConditions);
-    setTrafficConditions(spiked);
-    addAlert('⚡ Traffic surge detected! Recalculating route...', 'warning');
-    if (phase === 'enroute' && route.length > 0) {
-      setTrafficSegments(generateTrafficSegments(routeRef.current, spiked, emergencyMode));
-      performReroute(spiked);
-    }
-    if (phase === 'located' && emergencyLocation) {
-      const newH = rankHospitals(localHospitals, emergencyLocation, emergencyType, spiked, emergencyMode);
-      setRankedHospitals(newH.slice(0, 3));
-      setSelectedHospital(newH[0]);
-      addAlert('🔄 Hospital ranking updated due to traffic changes', 'info');
-    }
-  }, [trafficConditions, phase, emergencyLocation, emergencyType, emergencyMode, localHospitals, route, rankHospitals, addAlert, performReroute]);
+  // ── Emergency Mode Toggle ──────────────────────────────────────────
+  const handleEmergencyModeToggle = useCallback(() => {
+    setEmergencyMode(prev => {
+      const next = !prev;
+      addAlert(next ? '🟢 Green Corridor Preemption activated for Ambulance' : '⚪ Green Corridor Preemption deactivated', next ? 'success' : 'info');
+      return next;
+    });
+  }, [addAlert]);
 
   // ── Reset ──────────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -692,6 +1099,14 @@ export default function App() {
   const [sosVisible, setSosVisible]       = useState(false);
   const sosPendingRef                     = useRef(null); // stores the pending dispatch args
 
+  const handleBackToDispatch = useCallback(() => {
+    if (!loggedInRoles?.dispatch && !loggedInRoles?.dispatcher) {
+      setLoginModalRole('dispatcher');
+    } else {
+      setCurrentView('dispatch');
+    }
+  }, [loggedInRoles]);
+
   // ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden font-body bg-gray-50 dark:bg-brand-bg text-gray-900 dark:text-brand-text transition-colors duration-300">
@@ -703,79 +1118,301 @@ export default function App() {
       <Header
         phase={phase}
         currentTime={currentTime}
-        onMenuToggle={() => setSidebarOpen(o => !o)}
         currentView={currentView}
-        onViewChange={setCurrentView}
+        darkMode={darkMode}
+        onDarkModeToggle={toggleTheme}
+        loggedInRoles={loggedInRoles}
+        onLogout={(role) => {
+          setLoggedInRoles(prev => {
+            const n = { ...prev };
+            delete n[role];
+            if (role === 'dispatch') delete n.dispatcher;
+            if (role === 'dispatcher') delete n.dispatch;
+            try {
+              localStorage.setItem('lifeline_logged_in_roles', JSON.stringify(n));
+            } catch (_) {}
+            return n;
+          });
+          // If currently on that portal, go back to citizen
+          if (currentView === role || (role === 'dispatch' && currentView === 'dispatch') || (role === 'ambulance' && currentView === 'ambulance')) {
+            setCurrentView('citizen');
+          }
+        }}
+        onNavigate={(target) => {
+          if (target.startsWith('login:')) {
+            const role = target.slice(6);
+            setLoginModalRole(role === 'dispatch' ? 'dispatcher' : role);
+            return;
+          }
+          if (target === 'dispatch' && !loggedInRoles?.dispatch && !loggedInRoles?.dispatcher) {
+            setLoginModalRole('dispatcher');
+            return;
+          }
+          if (target === 'ambulance' && !loggedInRoles?.ambulance) {
+            setLoginModalRole('ambulance');
+            return;
+          }
+          setCurrentView(target);
+        }}
       />
+      {/* Role Login Modal */}
+      {loginModalRole && (
+        <RoleLoginModal
+          role={loginModalRole}
+          onSuccess={(userData) => {
+            const roleKey = (loginModalRole === 'dispatcher' || loginModalRole === 'dispatch') ? 'dispatch' : loginModalRole;
+            setLoggedInRoles(prev => {
+              const updated = {
+                ...prev,
+                [roleKey]: userData,
+                ...(roleKey === 'dispatch' ? { dispatcher: userData } : {})
+              };
+              try {
+                localStorage.setItem('lifeline_logged_in_roles', JSON.stringify(updated));
+              } catch (_) {}
+              return updated;
+            });
+            setCurrentView(roleKey);
+            setLoginModalRole(null);
+          }}
+          onClose={() => setLoginModalRole(null)}
+        />
+      )}
 
-      {currentView !== 'dispatch' ? (
-        <CitizenDashboard onBackToDispatch={() => setCurrentView('dispatch')} />
+      {currentView === 'hospital' ? (
+        <HospitalDashboard onBackToDispatch={handleBackToDispatch} />
+      ) : currentView === 'ambulance' && !loggedInRoles?.ambulance ? (
+        <div className="flex-1 flex items-center justify-center p-6 bg-slate-900/95 backdrop-blur-md text-white">
+          <div className="max-w-md w-full bg-[#10243A] border border-slate-800 rounded-3xl p-8 text-center space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-emergency/10 border border-emergency/30 text-emergency mx-auto flex items-center justify-center shadow-lg shadow-emergency/10">
+              <Ambulance className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-emergency/10 text-emergency border border-emergency/20">
+                Restricted Field Terminal
+              </span>
+              <h3 className="text-xl font-black text-slate-100">
+                Ambulance MDT Sign In Required
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
+                In-cab telemetry, CAD dispatch directives, and patient transit routing require verified ambulance crew credentials.
+              </p>
+            </div>
+            <div className="pt-2 space-y-2.5">
+              <button
+                onClick={() => setLoginModalRole('ambulance')}
+                className="w-full py-3 px-4 rounded-xl bg-emergency hover:bg-red-700 text-white font-bold text-xs tracking-wider uppercase transition-all shadow-lg shadow-emergency/20 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Verify Credentials & Sign In</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setCurrentView('citizen')}
+                className="w-full py-2.5 px-3 rounded-xl border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-200 text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Return to Public Citizen Portal</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : currentView === 'ambulance' ? (
+        <AmbulanceCockpit
+          assignedAmbulance={selectedAmbulance}
+          emergencyLocation={emergencyLocation}
+          emergencyType={emergencyType}
+          selectedHospital={selectedHospital}
+          activeMission={activeMission}
+          route={route.length ? route : (optimalRoute.length ? optimalRoute : shortestRoute)}
+          routeProgress={routeProgress}
+          eta={eta}
+          distance={distance}
+          phase={phase}
+          emergencyMode={emergencyMode}
+          onEmergencyModeToggle={handleEmergencyModeToggle}
+          onBackToDispatch={handleBackToDispatch}
+          ambulancePosition={ambulancePosition}
+          ambulances={ambulances}
+          hospitals={localHospitals}
+          rankedHospitals={rankedHospitals}
+          shortestRoute={shortestRoute}
+          optimalRoute={optimalRoute}
+          alternativeRoute={alternativeRoute}
+          trafficSegments={trafficSegments}
+          pickupIndex={pickupIndex}
+          onMapClick={handleMapClick}
+        />
+      ) : currentView === 'citizen' ? (
+        <CitizenDashboard
+          onBackToDispatch={handleBackToDispatch}
+          assignedAmbulance={selectedAmbulance}
+          emergencyLocation={emergencyLocation}
+          emergencyType={emergencyType}
+          selectedHospital={selectedHospital}
+          activeMission={activeMission}
+          route={route.length ? route : (optimalRoute.length ? optimalRoute : shortestRoute)}
+          routeProgress={routeProgress}
+          eta={eta}
+          distance={distance}
+          phase={phase}
+          emergencyMode={emergencyMode}
+          ambulancePosition={ambulancePosition}
+          ambulances={ambulances}
+          hospitals={localHospitals}
+          rankedHospitals={rankedHospitals}
+          shortestRoute={shortestRoute}
+          optimalRoute={optimalRoute}
+          alternativeRoute={alternativeRoute}
+          trafficSegments={trafficSegments}
+          pickupIndex={pickupIndex}
+        />
+      ) : currentView === 'dispatch' && !loggedInRoles?.dispatch && !loggedInRoles?.dispatcher ? (
+        <div className="flex-1 flex items-center justify-center p-6 bg-slate-900/95 backdrop-blur-md text-white">
+          <div className="max-w-md w-full bg-[#10243A] border border-slate-800 rounded-3xl p-8 text-center space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-primary-500/10 border border-primary-500/30 text-primary-400 mx-auto flex items-center justify-center shadow-lg shadow-primary-500/10">
+              <Radio className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-primary-500/10 text-primary-400 border border-primary-500/20">
+                Operations Command
+              </span>
+              <h3 className="text-xl font-black text-slate-100">
+                Dispatcher Console Sign In Required
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
+                Central fleet management, real-time green corridor control, and 911 intake routing are restricted to authorized dispatchers.
+              </p>
+            </div>
+            <div className="pt-2 space-y-2.5">
+              <button
+                onClick={() => setLoginModalRole('dispatcher')}
+                className="w-full py-3 px-4 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-bold text-xs tracking-wider uppercase transition-all shadow-lg shadow-primary-500/20 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Verify Credentials & Sign In</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setCurrentView('citizen')}
+                className="w-full py-2.5 px-3 rounded-xl border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-200 text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Return to Public Citizen Portal</span>
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
         <>
-          <div className="flex-1 flex overflow-hidden min-h-0 relative">
-            {/* ── Mobile overlay backdrop ──────────────────────────────── */}
-            {sidebarOpen && (
-              <div
-                className="fixed inset-0 bg-black/50 z-[200] md:hidden"
-                onClick={() => setSidebarOpen(false)}
-              />
-            )}
-
-            {/* ── Left sidebar ────────────────────────────────────────── */}
-            <div className={`
-              fixed md:relative inset-y-0 left-0 z-[300] md:z-auto
-              w-80 shrink-0 flex flex-col overflow-hidden
-              bg-white dark:bg-brand-bg border-r border-gray-200 dark:border-brand-border
-              transition-transform duration-300 ease-in-out
-              ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-            `}>
-              {/* Mobile close button */}
-              <div className="flex items-center justify-between px-3 pt-3 md:hidden">
-                <span style={{ fontFamily: 'var(--font-display)', fontSize: 10, color: '#4a7090', letterSpacing: '0.15em' }}>CONTROL PANEL</span>
-                <button
-                  onClick={() => setSidebarOpen(false)}
-                  style={{ color: '#4a7090', fontSize: 18, background: 'none', border: 'none', cursor: 'pointer' }}
-                >✕</button>
+          {/* Real-time Citizen Emergency Notification Banner */}
+          {newCitizenAlert && currentView === 'dispatch' && (
+            <div className="bg-red-700 dark:bg-red-800 text-white px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm font-semibold shadow-sm z-30 shrink-0 border-b border-red-900">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <AlertOctagon size={16} className="text-white shrink-0" />
+                <span className="truncate">
+                  <strong className="tracking-wide uppercase text-[11px] bg-red-900/60 px-1.5 py-0.5 rounded mr-1.5 font-bold">Priority CAD Alert</strong>
+                  {newCitizenAlert.locationName} ({newCitizenAlert.type}) reported by {newCitizenAlert.citizenName || 'Citizen'}
+                </span>
+                {newCitizenAlert.isLiveGps && (
+                  <span className="text-[10px] bg-white/15 border border-white/20 px-2 py-0.5 rounded font-mono shrink-0 flex items-center gap-1">
+                    <Radio size={10} />
+                    <span>Live GPS</span>
+                  </span>
+                )}
               </div>
-              <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-2.5">
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => {
+                    handleQuickDispatch(newCitizenAlert);
+                    setNewCitizenAlert(null);
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg bg-white text-red-800 hover:bg-slate-100 text-xs font-bold shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Ambulance size={14} />
+                  <span>Assign & Route Unit</span>
+                </button>
+                <button
+                  onClick={() => setNewCitizenAlert(null)}
+                  className="px-2 py-1 text-white/70 hover:text-white text-xs font-bold transition-colors cursor-pointer"
+                  title="Dismiss alert"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Mobile Tab Switcher for Dispatcher Workspace (< lg screens) */}
+          <div className="lg:hidden flex items-center justify-around bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-2 py-1.5 shrink-0 z-30">
+            <button
+              onClick={() => setDispatcherMobileTab('queue')}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                dispatcherMobileTab === 'queue'
+                  ? 'bg-primary-50 dark:bg-slate-800 text-primary-700 dark:text-slate-100 font-semibold'
+                  : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              Incident Queue ({cityEmergencies.length})
+            </button>
+            <button
+              onClick={() => setDispatcherMobileTab('map')}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                dispatcherMobileTab === 'map'
+                  ? 'bg-primary-50 dark:bg-slate-800 text-primary-700 dark:text-slate-100 font-semibold'
+                  : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              Live Map
+            </button>
+            <button
+              onClick={() => setDispatcherMobileTab('dispatch')}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                dispatcherMobileTab === 'dispatch'
+                  ? 'bg-primary-50 dark:bg-slate-800 text-primary-700 dark:text-slate-100 font-semibold'
+                  : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              Dispatch Details {selectedAmbulance ? `(${selectedAmbulance.name})` : ''}
+            </button>
+          </div>
+
+          <div className="flex-1 flex overflow-hidden min-h-0 relative">
+            {/* ── 1. Left Column: Incident Queue & Rapid Intake ──────────────── */}
+            <div className={`
+              w-full lg:w-72 xl:w-80 shrink-0 flex flex-col overflow-hidden
+              bg-white dark:bg-slate-900/90 border-r border-slate-200 dark:border-slate-800
+              ${dispatcherMobileTab === 'queue' ? 'flex' : 'hidden lg:flex'}
+            `}>
+              <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-3">
+                <CityEmergenciesPanel
+                  cityEmergencies={cityEmergencies}
+                  activeEmergencyId={activeEmergencyId}
+                  onSelectEmergency={(emg) => {
+                    handleSelectCityEmergency(emg);
+                    // On mobile, auto-switch to map view when incident is selected
+                    if (window.innerWidth < 1024) setDispatcherMobileTab('map');
+                  }}
+                  onQuickDispatch={(emg) => {
+                    handleQuickDispatch(emg);
+                    if (window.innerWidth < 1024) setDispatcherMobileTab('map');
+                  }}
+                  phase={phase}
+                />
                 <EmergencyInput
                   emergencyType={emergencyType}
                   onChange={handleEmergencyTypeChange}
                   phase={phase}
                   emergencyLocation={emergencyLocation}
                 />
-                <AmbulancePanel
-                  ambulances={ambulances}
-                  selectedAmbulance={selectedAmbulance}
-                  onSelect={setSelectedAmbulance}
-                  trafficConditions={trafficConditions}
-                  phase={phase}
-                />
-                <HospitalPanel
-                  rankedHospitals={rankedHospitals}
-                  selectedHospital={selectedHospital}
-                  onSelect={setSelectedHospital}
-                  phase={phase}
-                  loading={hospitalLoading}
-                  emergencyType={emergencyType}
-                />
-                <RouteSelector
-                  routeMode={routeMode}
-                  onChange={setRouteMode}
-                  phase={phase}
-                  selectedHospital={selectedHospital}
-                  trafficConditions={trafficConditions}
-                  routeMetrics={routeMetrics}
-                />
-                <DispatchTimeline
-                  steps={dispatchTimeline}
-                  phase={phase}
-                />
               </div>
             </div>
 
-            {/* ── Map area ─────────────────────────────────────────────── */}
-            <div className="flex-1 relative overflow-hidden">
+            {/* ── 2. Central Workspace: Operational Live Map ─────────────────── */}
+            <div className={`
+              flex-1 relative overflow-hidden
+              ${dispatcherMobileTab === 'map' ? 'flex' : 'hidden lg:flex'}
+            `}>
               <MapView
                 emergencyLocation={emergencyLocation}
                 ambulances={ambulances}
@@ -794,7 +1431,7 @@ export default function App() {
                 phase={phase}
                 onMapClick={handleMapClick}
                 onSelectAmbulance={setSelectedAmbulance}
-                onSelectHospital={setSelectedHospital}
+                onSelectHospital={handleHospitalChange}
                 onSelectAlternate={handleSelectAlternate}
                 pickupIndex={pickupIndex}
                 activeRouteType={activeRouteType}
@@ -818,26 +1455,60 @@ export default function App() {
                 <AlertSystem alerts={alerts} onRemove={removeAlert} />
               </div>
 
-              {/* Mobile dispatch button floating on map */}
+              {/* Mobile dispatch floating button */}
               {phase === 'located' && selectedAmbulance && selectedHospital && (
                 <button
                   onClick={handleDispatch}
-                  className="btn-dispatch md:hidden absolute bottom-4 left-1/2 -translate-x-1/2 z-[900] px-8 py-3 rounded-xl text-sm"
+                  className="lg:hidden absolute bottom-4 left-1/2 -translate-x-1/2 z-[900] px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide bg-red-600 hover:bg-red-700 text-white shadow-lg flex items-center gap-2"
                 >
-                  🚑 DISPATCH
+                  <span>Authorize Dispatch: {selectedAmbulance.name}</span>
                 </button>
               )}
             </div>
+
+            {/* ── 3. Right Column: Contextual Dispatch & Unit Assignment ──────── */}
+            <div className={`
+              w-full lg:w-80 xl:w-88 shrink-0 flex flex-col overflow-hidden
+              bg-white dark:bg-slate-900/90 border-l border-slate-200 dark:border-slate-800
+              ${dispatcherMobileTab === 'dispatch' ? 'flex' : 'hidden lg:flex'}
+            `}>
+              <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-3">
+                <AmbulancePanel
+                  ambulances={ambulances}
+                  selectedAmbulance={selectedAmbulance}
+                  onSelect={setSelectedAmbulance}
+                  trafficConditions={trafficConditions}
+                  phase={phase}
+                  selectedHospital={selectedHospital}
+                />
+                <HospitalPanel
+                  rankedHospitals={rankedHospitals}
+                  selectedHospital={selectedHospital}
+                  onSelect={handleHospitalChange}
+                  phase={phase}
+                  loading={hospitalLoading}
+                  emergencyType={emergencyType}
+                />
+                <RouteSelector
+                  routeMode={routeMode}
+                  onChange={setRouteMode}
+                  phase={phase}
+                  selectedHospital={selectedHospital}
+                  trafficConditions={trafficConditions}
+                  routeMetrics={routeMetrics}
+                />
+                <DispatchTimeline
+                  steps={dispatchTimeline}
+                  phase={phase}
+                />
+              </div>
+            </div>
           </div>
 
+          {/* Operational Control Bar */}
           <ControlPanel
             trafficEnabled={trafficEnabled}
             onTrafficToggle={setTrafficEnabled}
-            emergencyMode={emergencyMode}
-            onEmergencyModeToggle={handleEmergencyModeToggle}
-            simulationSpeed={simulationSpeed}
-            onSimulationSpeedChange={setSimulationSpeed}
-            onSimulateTraffic={handleSimulateTraffic}
             onDispatch={handleDispatch}
             onReset={handleReset}
             phase={phase}

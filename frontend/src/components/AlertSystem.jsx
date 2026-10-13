@@ -1,115 +1,56 @@
 import React, { useEffect, useState } from 'react';
+import { Info, CheckCircle2, AlertTriangle, AlertOctagon, X } from 'lucide-react';
 
-const TYPE_STYLES = {
-  info:    { border: '#00d4ff', bg: 'rgba(0,212,255,0.08)',  icon: 'ℹ️' },
-  success: { border: '#00ff88', bg: 'rgba(0,255,136,0.08)',  icon: '✅' },
-  warning: { border: '#ffa500', bg: 'rgba(255,165,0,0.08)',  icon: '⚠️' },
-  danger:  { border: '#ff3333', bg: 'rgba(255,51,51,0.08)',  icon: '🚨' },
+const TYPE_CONFIG = {
+  info:    { border: 'border-l-blue-500',   bg: 'bg-white dark:bg-slate-900', icon: Info, color: 'text-blue-500' },
+  success: { border: 'border-l-teal',       bg: 'bg-white dark:bg-slate-900', icon: CheckCircle2, color: 'text-teal' },
+  warning: { border: 'border-l-amber-500',  bg: 'bg-white dark:bg-slate-900', icon: AlertTriangle, color: 'text-amber-500' },
+  danger:  { border: 'border-l-emergency',  bg: 'bg-white dark:bg-slate-900', icon: AlertOctagon, color: 'text-emergency' },
 };
 
 function AlertItem({ alert, onRemove }) {
   const [visible, setVisible] = useState(false);
-  const style = TYPE_STYLES[alert.type] || TYPE_STYLES.info;
+  const cfg = TYPE_CONFIG[alert.type] || TYPE_CONFIG.info;
+  const Icon = cfg.icon;
 
   useEffect(() => {
-    // Fade in
     const t1 = setTimeout(() => setVisible(true), 10);
-    // Auto remove after 6s
     const t2 = setTimeout(() => {
       setVisible(false);
-      setTimeout(() => onRemove(alert.id), 300);
-    }, 6000);
+      setTimeout(() => onRemove(alert.id), 250);
+    }, 5500);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [alert.id, onRemove]);
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-start', gap: 8,
-      padding: '8px 10px',
-      background: style.bg,
-      border: `1px solid ${style.border}44`,
-      borderLeft: `3px solid ${style.border}`,
-      borderRadius: '0 6px 6px 0',
-      marginBottom: 4,
-      opacity: visible ? 1 : 0,
-      transform: visible ? 'translateX(0)' : 'translateX(20px)',
-      transition: 'all 0.3s ease-out',
-      cursor: 'pointer',
-    }}
-    onClick={() => { setVisible(false); setTimeout(() => onRemove(alert.id), 300); }}
+    <div
+      onClick={() => { setVisible(false); setTimeout(() => onRemove(alert.id), 250); }}
+      className={`p-3 rounded-lg border border-slate-200 dark:border-slate-800 ${cfg.border} border-l-4 shadow-card mb-2 transition-all duration-200 cursor-pointer flex items-start gap-2.5 ${cfg.bg} ${
+        visible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'
+      }`}
     >
-      <span style={{ fontSize: 12, flexShrink: 0, marginTop: 1 }}>{style.icon}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontFamily: 'var(--font-body)',
-          fontSize: 11, color: 'var(--text)',
-          lineHeight: 1.3,
-        }}>{alert.message}</div>
-        <div style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 9, color: 'var(--muted)',
-          marginTop: 2,
-        }}>{alert.time}</div>
+      <Icon size={16} className={`${cfg.color} flex-shrink-0 mt-0.5`} />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-medium text-slate-800 dark:text-slate-100 leading-snug">
+          {alert.message}
+        </div>
+        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+          {alert.time}
+        </div>
       </div>
+      <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+        <X size={12} />
+      </button>
     </div>
   );
 }
 
-export default function AlertSystem({ alerts, onRemove }) {
+export default function AlertSystem({ alerts = [], onRemove }) {
   return (
-    <div style={{
-      background: 'var(--card)',
-      border: '1px solid var(--border)',
-      borderRadius: 10,
-      padding: 12,
-      maxHeight: 220,
-      overflow: 'hidden',
-      display: 'flex', flexDirection: 'column',
-    }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 8, flexShrink: 0,
-      }}>
-        <div style={{
-          fontFamily: 'var(--font-display)', fontSize: 10,
-          color: 'var(--muted)', letterSpacing: '0.15em',
-          display: 'flex', alignItems: 'center', gap: 6,
-        }}>
-          SYSTEM ALERTS
-          {alerts.length > 0 && (
-            <span style={{
-              background: '#ff3333', color: '#fff',
-              borderRadius: '50%', width: 14, height: 14,
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 8, fontWeight: 700,
-            }}>{Math.min(alerts.length, 9)}</span>
-          )}
-        </div>
-        {alerts.length > 0 && (
-          <button
-            onClick={() => alerts.forEach(a => onRemove(a.id))}
-            style={{
-              background: 'none', border: 'none',
-              color: 'var(--muted)', fontFamily: 'var(--font-mono)',
-              fontSize: 9, cursor: 'pointer',
-              letterSpacing: '0.06em',
-            }}
-          >CLEAR ALL</button>
-        )}
-      </div>
-
-      <div style={{ overflow: 'hidden', flex: 1 }}>
-        {alerts.length === 0 ? (
-          <div style={{
-            textAlign: 'center', padding: '16px 0',
-            fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted)',
-          }}>No active alerts</div>
-        ) : (
-          alerts.slice(0, 5).map(alert => (
-            <AlertItem key={alert.id} alert={alert} onRemove={onRemove} />
-          ))
-        )}
-      </div>
+    <div className="flex flex-col gap-1 pointer-events-auto">
+      {alerts.map(alert => (
+        <AlertItem key={alert.id} alert={alert} onRemove={onRemove} />
+      ))}
     </div>
   );
 }
